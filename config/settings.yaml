@@ -1,0 +1,121 @@
+# ============================================
+# Penélope — Central Settings
+# ============================================
+
+system:
+  name: "Penélope"
+  version: "0.1.0"
+  data_dir: "C:\\Penelope\\data"
+  logs_dir: "C:\\Penelope\\logs"
+  owner_name: "Pietro"
+  language: "pt-BR"
+
+# --- AI / LLM ---
+llm:
+  host: "http://localhost:11434"
+  model_primary: "llama3.1:8b"
+  model_fallback: "phi3:mini"
+  context_window: 8192
+  temperature: 0.7
+  max_tokens: 2048
+  timeout_seconds: 30
+  retry_attempts: 3
+  retry_delay_seconds: 2
+
+# --- Memory ---
+memory:
+  chroma_persist_dir: "C:\\Penelope\\data\\chroma"
+  session_db_path: "C:\\Penelope\\data\\sessions.db"
+  max_short_term_messages: 20
+  max_session_history: 1000
+  embedding_model: "nomic-embed-text"
+
+# --- Voice ---
+voice:
+  wake_word: "penelope"
+  wake_word_threshold: 0.7
+  wake_word_model_path: null  # null = use default
+  stt_model: "medium"         # tiny, base, small, medium, large
+  stt_language: "pt"
+  stt_device: "auto"          # auto, cpu, cuda
+  tts_model: "pt_BR-faber-medium"
+  tts_speaker_id: 0
+  tts_sample_rate: 22050
+  silence_threshold: 0.03
+  silence_duration_ms: 1500
+  audio_sample_rate: 16000
+  audio_channels: 1
+
+# --- Auth ---
+auth:
+  profiles_db_path: "C:\\Penelope\\data\\profiles.db"
+  max_failed_attempts: 3
+  lockout_duration_minutes: 30
+  session_timeout_minutes:
+    owner: 0          # 0 = no timeout
+    co_owner: 60
+    common: 30
+  allowed_hours:
+    common:
+      start: "08:00"
+      end: "20:00"
+
+# --- Persistence ---
+persistence:
+  watchdog_check_interval_seconds: 5
+  max_restarts_per_minute: 5
+  crash_log_path: "C:\\Penelope\\logs\\crash.log"
+  health_check_interval_seconds: 30
+  ram_warning_threshold_percent: 85
+  ram_critical_threshold_percent: 95
+
+# --- UI ---
+ui:
+  hud_opacity: 0.85
+  hud_position: "bottom-right"
+  hud_width: 420
+  hud_height: 280
+  radial_menu_hotkey: "alt+space"
+  radial_menu_radius: 200
+  theme: "holographic"
+  animations_enabled: true
+  typewriter_speed_ms: 30
+
+# --- Modes ---
+modes:
+  default: "normal"
+  schedule:
+    morning:
+      start: "06:00"
+      end: "10:00"
+    night:
+      start: "22:00"
+      end: "06:00"
+  game_mode:
+    detection_interval_seconds: 10
+    known_games:
+      - "GTA5.exe"
+      - "valorant.exe"
+      - "cs2.exe"
+      - "RocketLeague.exe"
+      - "FortniteLauncher.exe"
+  wake_word_intervals_ms:
+    normal: 100
+    game: 500
+    power: 50
+    silent: 200
+    night: 300
+
+# --- Windows Integration ---
+windows:
+  clipboard_history_max: 500
+  clipboard_db_path: "C:\\Penelope\\data\\clipboard.db"
+  screenshot_dir: "C:\\Penelope\\data\\screenshots"
+  favorite_apps:
+    chrome: "chrome.exe"
+    explorer: "explorer.exe"
+    vscode: "Code.exe"
+    spotify: "Spotify.exe"
+    whatsapp: "WhatsApp.exe"
+    vlc: "vlc.exe"
+    task_manager: "Taskmgr.exe"
