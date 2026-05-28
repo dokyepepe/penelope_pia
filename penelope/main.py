@@ -1,0 +1,411 @@
+"""
+Penélope — Main Entry Point
+Core orchestrator that initializes all modules and runs the main loop.
+
+Usage:
+    python -m penelope.main
+    penelope  (if installed via pip)
+"""
+
+import asyncio
+import signal
+import sys
+import threading
+import time
+from typing import Optional
+
+from penelope.utils.constants import UserLevel, SystemMode
+from penelope.utils.logger import setup_logging, get_logger
+
+# Initialize logging first
+setup_logging(debug="--debug" in sys.argv)
+log = get_logger(__name__)
+
+
+# ============================================
+# Module references (initialized in init_*)
+# ============================================
+_llm_client = None
+_audio_manager = None
+_wake_word = None
+_stt = None
+_tts = None
+_authenticator = None
+_session_manager = None
+_intent_parser = None
+_command_executor = None
+_watchdog = None
+_health_monitor = None
+_windows_control = None
+_shutdown_event = threading.Event()
+
+
+def main() -> None:
+    """Main entry point for the Penélope system."""
+    log.info("═══════════════════════════════════════════")
+    log.info("  PENÉLOPE v0.1.0 — Inicializando...")
+    log.info("═══════════════════════════════════════════")
+
+    # ── 1. Create data directories ──
+    from penelope.core.setup_wizard import ensure_directories
+    ensure_directories()
+
+    # ── 2. Check first boot ──
+    from penelope.core.setup_wizard import needs_setup, run_setup_wizard
+    if needs_setup():
+        log.info("First boot detected — running setup wizard")
+        if not run_setup_wizard():
+            log.error("Setup wizard failed or cancelled")
+            sys.exit(1)
+
+    # ── 3. Initialize all modules ──
+    _init_all()
+
+    # ── 4. Register signal handlers ──
+    signal.signal(signal.SIGINT, _signal_handler)
+    signal.signal(signal.SIGTERM, _signal_handler)
+
+    # ── 5. Run main loop ──
+    log.info("═══════════════════════════════════════════")
+    log.info("  PENÉLOPE ONLINE — Aguardando wake word...")
+    log.info("  (ou Alt+Space como atalho)")
+    log.info("═══════════════════════════════════════════")
+
+    try:
+        asyncio.run(_main_loop())
+    except KeyboardInterrupt:
+        log.info("Interrupted by keyboard")
+    finally:
+        _shutdown()
+
+
+def _init_all() -> None:
+    """Initialize all system modules in the correct order."""
+    global _llm_client, _audio_manager, _wake_word, _stt, _tts
+    global _authenticator, _session_manager, _intent_parser
+    global _command_executor, _watchdog, _health_monitor, _windows_control
+
+    # ── LLM Client ──
+    log.info("Inicializando LLM Client...")
+    from penelope.ai.llm_client import LLMClient
+    _llm_client = LLMClient()
+    _connect_llm_sync()
+
+    # ── Voice Pipeline ──
+    log.info("Inicializando pipeline de voz...")
+
+    from penelope.voice.audio_manager import AudioManager
+    _audio_manager = AudioManager(sample_rate=16000, channels=1, chunk_size=1024)
+
+    from penelope.voice.stt import SpeechToText
+    _stt = SpeechToText(model_size="medium", language="pt", device="auto")
+    if not _stt.load_model():
+        log.warning("Whisper STT não carregado — transcrição desabilitada")
+
+    from penelope.voice.tts import TextToSpeech
+    _tts = TextToSpeech()
+    if not _tts.initialize():
+        log.warning("TTS não disponível — respostas apenas em texto")
+
+    from penelope.voice.wake_word import WakeWordDetector
+    _wake_word = WakeWordDetector(threshold=0.7, check_interval_ms=100)
+    _wake_word.initialize()
+
+    # ── Auth ──
+    log.info("Inicializando autenticação...")
+    from penelope.auth.authenticator import Authenticator
+    from penelope.auth.session import SessionManager
+    _authenticator = Authenticator()
+    _session_manager = SessionManager()
+
+    # ── Intent Parser + Executor ──
+    log.info("Inicializando processamento de comandos...")
+    from penelope.ai.intent_parser import IntentParser
+    _intent_parser = IntentParser()
+
+    from penelope.system.windows_control import WindowsControl
+    _windows_control = WindowsControl()
+
+    from penelope.core.command_executor import CommandExecutor
+    _command_executor = CommandExecutor(
+        windows_control=_windows_control,
+        llm_client=_llm_client,
+        audio_manager=_audio_manager,
+    )
+
+    # ── Persistence ──
+    log.info("Inicializando watchdog e monitor de saúde...")
+    from penelope.persistence.watchdog import ProcessWatchdog
+    _watchdog = ProcessWatchdog(check_interval=5.0)
+    _watchdog.start()
+
+    from penelope.persistence.health_monitor import HealthMonitor
+    _health_monitor = HealthMonitor(check_interval=30.0)
+    _health_monitor.start()
+
+    log.info("✓ Todos os módulos inicializados")
+
+
+def _connect_llm_sync() -> None:
+    """Connect to Ollama synchronously."""
+    try:
+        loop = asyncio.new_event_loop()
+        connected = loop.run_until_complete(_llm_client.connect())
+        loop.close()
+        if connected:
+            log.info(f"✓ LLM conectado: {_llm_client.model}")
+        else:
+            log.warning("⚠ Ollama offline — modo degradado (regras simples)")
+    except Exception as e:
+        log.warning(f"⚠ Não foi possível conectar ao Ollama: {e}")
+
+
+async def _main_loop() -> None:
+    """
+    Main interaction loop.
+
+    Flow:
+    1. Wait for wake word (or Alt+Space)
+    2. Authenticate user
+    3. Listen for command
+    4. Parse intent
+    5. Execute command
+    6. Speak response
+    7. Check session timeout
+    8. Repeat
+    """
+    # Start audio recording for wake word
+    _audio_manager.register_callback(_wake_word.on_audio_chunk)
+    _audio_manager.start_recording()
+    _wake_word.start()
+
+    # Wake word event trigger
+    wake_event = asyncio.Event()
+
+    def on_wake():
+        """Called from the wake word thread when triggered."""
+        # Schedule the event set on the event loop
+        try:
+            loop = asyncio.get_running_loop()
+            loop.call_soon_threadsafe(wake_event.set)
+        except RuntimeError:
+            wake_event.set()
+
+    _wake_word.on_wake(on_wake)
+
+    log.info("Loop principal ativo — escutando wake word...")
+
+    while not _shutdown_event.is_set():
+        try:
+            # ── 1. Wait for wake word ──
+            wake_event.clear()
+
+            # Use a timeout so we can check shutdown and session timeout
+            try:
+                await asyncio.wait_for(
+                    _wait_for_event(wake_event),
+                    timeout=5.0,
+                )
+            except asyncio.TimeoutError:
+                # Periodic housekeeping
+                await _session_manager.check_timeout()
+                continue
+
+            if _shutdown_event.is_set():
+                break
+
+            log.info("🎤 Wake word detectado!")
+
+            # ── 2. Authenticate ──
+            session = _session_manager.current
+
+            if session is None or not _session_manager.is_active:
+                session = await _authenticate_user()
+                if session is None:
+                    continue  # Auth failed, go back to listening
+
+            # ── 3. Listen for command ──
+            log.info(f"Escutando comando de {session.user_name}...")
+            if _tts and _tts.is_available:
+                greeting = _llm_client.get_greeting(
+                    session.user_name, session.user_level
+                ) if _llm_client else f"Olá, {session.user_name}."
+                # Only greet on new session (first command)
+                if session.elapsed_minutes < 0.1:
+                    await _tts.speak(greeting)
+
+            transcription = await _listen_and_transcribe()
+            if not transcription:
+                log.debug("Transcrição vazia — voltando a escutar")
+                continue
+
+            log.info(f"📝 Transcrito: '{transcription}'")
+
+            # ── 4. Parse intent ──
+            intent = _intent_parser.parse(transcription)
+            log.info(
+                f"🧠 Intent: {intent.action} "
+                f"({intent.category.value}, llm={intent.requires_llm})"
+            )
+
+            # Set persona for LLM if needed
+            if intent.requires_llm and _llm_client:
+                _llm_client.set_persona(
+                    session.user_name,
+                    session.user_level,
+                    _command_executor.current_mode,
+                )
+
+            # ── 5. Execute ──
+            response = await _command_executor.execute(intent, session)
+            log.info(f"💬 Resposta: '{response[:80]}...'")
+
+            # ── 6. Speak ──
+            if _tts and _tts.is_available:
+                if _command_executor.current_mode != SystemMode.SILENT:
+                    await _tts.speak(response)
+                else:
+                    log.info(f"[SILENT MODE] {response}")
+            else:
+                print(f"  PENÉLOPE: {response}")
+
+        except asyncio.CancelledError:
+            break
+        except Exception as e:
+            log.error(f"Erro no loop principal: {e}", exc_info=True)
+            await asyncio.sleep(1.0)
+
+
+async def _wait_for_event(event: asyncio.Event) -> None:
+    """Wait for an asyncio event to be set."""
+    await event.wait()
+
+
+async def _authenticate_user():
+    """
+    Run the authentication flow.
+
+    Asks for passphrase, transcribes it, and authenticates.
+
+    Returns:
+        Session object if successful, None if denied.
+    """
+    if _tts and _tts.is_available:
+        await _tts.speak("Olá! Por favor, diga sua chave de acesso.")
+    else:
+        print("  PENÉLOPE: Olá! Por favor, diga sua chave de acesso.")
+
+    # Record passphrase
+    passphrase = await _listen_and_transcribe(max_duration=8.0)
+    if not passphrase:
+        if _tts and _tts.is_available:
+            await _tts.speak("Não entendi. Tente novamente.")
+        return None
+
+    log.info(f"Tentativa de autenticação: '{passphrase[:20]}...'")
+
+    # Authenticate
+    profile = await _authenticator.authenticate(passphrase)
+
+    if profile is None:
+        # Check if locked out
+        if _authenticator.profiles.is_locked_out():
+            msg = "Muitas tentativas incorretas. Acesso bloqueado temporariamente."
+        else:
+            msg = "Chave não reconhecida. Acesso negado."
+
+        if _tts and _tts.is_available:
+            await _tts.speak(msg)
+        else:
+            print(f"  PENÉLOPE: {msg}")
+        return None
+
+    # Create session
+    session = await _session_manager.start_session(profile)
+
+    log.info(
+        f"✓ Sessão iniciada: {profile.name} "
+        f"(Nível {profile.level.name})"
+    )
+
+    return session
+
+
+async def _listen_and_transcribe(max_duration: float = 10.0) -> str:
+    """
+    Record audio and transcribe it.
+
+    Args:
+        max_duration: Maximum recording time in seconds.
+
+    Returns:
+        Transcribed text, or empty string on failure.
+    """
+    if not _stt or not _stt.is_loaded:
+        # Fallback: read from stdin
+        print("  [STT offline — digite o comando]: ", end="", flush=True)
+        try:
+            loop = asyncio.get_running_loop()
+            text = await loop.run_in_executor(None, _read_input_line)
+            return text
+        except Exception:
+            return ""
+
+    # Record a chunk of audio
+    audio = _audio_manager.record_chunk(duration_seconds=max_duration)
+    if audio is None:
+        return ""
+
+    # Transcribe
+    text, confidence = _stt.transcribe(audio, sample_rate=16000)
+    if confidence < 0.3:
+        log.debug(f"Low confidence transcription ({confidence:.2f}): '{text}'")
+        return ""
+
+    return text.strip()
+
+
+def _read_input_line() -> str:
+    """Read a line from stdin (blocking, for use in executor)."""
+    try:
+        return input().strip()
+    except (EOFError, KeyboardInterrupt):
+        return ""
+
+
+def _signal_handler(signum, frame) -> None:
+    """Handle shutdown signals gracefully."""
+    log.info(f"Signal {signum} received — initiating shutdown")
+    _shutdown_event.set()
+
+
+def _shutdown() -> None:
+    """Shut down all modules gracefully."""
+    log.info("Encerrando Penélope...")
+
+    # Stop in reverse order of initialization
+    if _health_monitor:
+        _health_monitor.stop()
+
+    if _watchdog:
+        _watchdog.stop()
+
+    if _wake_word:
+        _wake_word.cleanup()
+
+    if _audio_manager:
+        _audio_manager.cleanup()
+
+    if _stt:
+        _stt.unload()
+
+    if _llm_client:
+        _llm_client.clear_history()
+
+    log.info("═══════════════════════════════════════════")
+    log.info("  PENÉLOPE OFFLINE — Até mais.")
+    log.info("═══════════════════════════════════════════")
+
+
+if __name__ == "__main__":
+    main()
