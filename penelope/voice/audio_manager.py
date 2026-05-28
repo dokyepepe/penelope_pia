@@ -4,9 +4,16 @@ Manages audio input/output devices, buffers, and volume control.
 """
 
 import threading
+import time
 from typing import Callable, Optional
 
-import numpy as np
+try:
+    import numpy as np
+except ImportError:
+    from typing import Any
+    class DummyNumPy:
+        ndarray = Any
+    np = DummyNumPy()
 
 from penelope.utils.logger import get_logger
 
@@ -224,7 +231,17 @@ class AudioManager:
             log.info(f"System volume set to {level:.0%}")
             return True
         except Exception as e:
-            log.error(f"Failed to set volume: {e}")
+            if level == 0.0:
+                # Mute key fallback
+                try:
+                    import ctypes
+                    ctypes.windll.user32.keybd_event(0xAD, 0, 0, 0)
+                    ctypes.windll.user32.keybd_event(0xAD, 0, 2, 0)
+                    log.info("System volume toggled/muted via Win32 virtual key")
+                    return True
+                except Exception:
+                    pass
+            log.error(f"Failed to set volume (no pycaw or keybd_event): {e}")
             return False
 
     def get_system_volume(self) -> float:
@@ -241,7 +258,7 @@ class AudioManager:
             volume = cast(interface, POINTER(IAudioEndpointVolume))
             return volume.GetMasterVolumeLevelScalar()
         except Exception as e:
-            log.error(f"Failed to get volume: {e}")
+            log.debug(f"Failed to get volume via pycaw: {e}")
             return 0.5
 
     def change_volume(self, delta: float = 0.1) -> float:
@@ -254,10 +271,37 @@ class AudioManager:
         Returns:
             New volume level.
         """
-        current = self.get_system_volume()
-        new_level = max(0.0, min(1.0, current + delta))
-        self.set_system_volume(new_level)
-        return new_level
+        # Try using pycaw first
+        try:
+            from pycaw.pycaw import AudioUtilities
+            # If pycaw is available, use standard logic
+            current = self.get_system_volume()
+            new_level = max(0.0, min(1.0, current + delta))
+            if self.set_system_volume(new_level):
+                return new_level
+        except Exception:
+            pass
+
+        # Fallback to keybd_event
+        try:
+            import ctypes
+            # 1 key press on Windows changes volume by 2%.
+            # So abs(delta) * 50 gives the number of keypresses needed.
+            presses = int(abs(delta) * 50)
+            if presses == 0:
+                presses = 1
+            
+            key_code = 0xAF if delta > 0 else 0xAE
+            for _ in range(presses):
+                ctypes.windll.user32.keybd_event(key_code, 0, 0, 0)
+                ctypes.windll.user32.keybd_event(key_code, 0, 2, 0)
+                time.sleep(0.01)
+            
+            log.info(f"System volume adjusted via virtual keys (delta={delta:+.1f})")
+            return 0.5
+        except Exception as e:
+            log.error(f"Failed to change volume via Win32 virtual keys: {e}")
+            return 0.5
 
     def cleanup(self) -> None:
         """Release all audio resources."""

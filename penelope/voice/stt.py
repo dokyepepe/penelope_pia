@@ -6,7 +6,13 @@ Transcription using faster-whisper (CTranslate2 backend).
 import time
 from typing import Optional, Tuple
 
-import numpy as np
+try:
+    import numpy as np
+except ImportError:
+    from typing import Any
+    class DummyNumPy:
+        ndarray = Any
+    np = DummyNumPy()
 
 from penelope.utils.logger import get_logger
 

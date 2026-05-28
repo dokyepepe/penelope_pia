@@ -7,7 +7,13 @@ import threading
 import time
 from typing import Callable, Optional
 
-import numpy as np
+try:
+    import numpy as np
+except ImportError:
+    from typing import Any
+    class DummyNumPy:
+        ndarray = Any
+    np = DummyNumPy()
 
 from penelope.core.event_bus import get_event_bus
 from penelope.utils.constants import EventType
@@ -43,6 +49,8 @@ class WakeWordDetector:
         self._buffer_lock = threading.Lock()
         self._on_wake_callbacks: list[Callable] = []
         self._fallback_active = False
+        self._win32_hotkey_active = False
+        self._win32_thread = None
         self.bus = get_event_bus()
 
     def initialize(self) -> bool:
@@ -95,9 +103,65 @@ class WakeWordDetector:
             self._fallback_active = True
             log.info("Keyboard fallback active: Alt+Space to trigger wake word")
         except ImportError:
-            log.error("keyboard module not installed for fallback")
+            log.warning("keyboard module not installed — falling back to native Win32 Hotkey API")
+            if not self._setup_win32_hotkey():
+                log.error("All fallback hotkey methods failed")
         except Exception as e:
             log.error(f"Failed to set up keyboard fallback: {e}")
+            if not self._setup_win32_hotkey():
+                log.error("All fallback hotkey methods failed")
+
+    def _setup_win32_hotkey(self) -> bool:
+        """Set up Alt+Space using native Win32 RegisterHotKey API."""
+        try:
+            import ctypes
+            from ctypes import wintypes
+            
+            HOTKEY_ID = 42  # Unique ID for our hotkey
+            MOD_ALT = 0x0001
+            VK_SPACE = 0x20
+            
+            user32 = ctypes.windll.user32
+            
+            # Unregister first just in case
+            user32.UnregisterHotKey(None, HOTKEY_ID)
+            
+            if not user32.RegisterHotKey(None, HOTKEY_ID, MOD_ALT, VK_SPACE):
+                log.error("Failed to register native Win32 hotkey (RegisterHotKey returned False)")
+                return False
+                
+            self._win32_hotkey_active = True
+            self._fallback_active = True
+            self._running = True  # Ensure running is True so message loop starts
+            
+            def message_loop():
+                msg = wintypes.MSG()
+                log.info("Win32 Hotkey Message Loop active (no dependencies)")
+                while self._running:
+                    # PM_REMOVE = 1
+                    if user32.PeekMessageW(ctypes.byref(msg), None, 0, 0, 1):
+                        if msg.message == 0x0312:  # WM_HOTKEY
+                            if msg.wParam == HOTKEY_ID:
+                                log.info("Wake word triggered via native Win32 Hotkey (Alt+Space)")
+                                self._on_hotkey_trigger()
+                        user32.TranslateMessage(ctypes.byref(msg))
+                        user32.DispatchMessageW(ctypes.byref(msg))
+                    time.sleep(0.05)
+                # Cleanup when loop exits
+                user32.UnregisterHotKey(None, HOTKEY_ID)
+                log.info("Win32 Hotkey unregistered")
+                
+            self._win32_thread = threading.Thread(
+                target=message_loop,
+                name="win32_hotkey_monitor",
+                daemon=True
+            )
+            self._win32_thread.start()
+            return True
+            
+        except Exception as e:
+            log.error(f"Failed to set up native Win32 hotkey fallback: {e}")
+            return False
 
     def _on_hotkey_trigger(self) -> None:
         """Handle keyboard hotkey as wake word trigger."""
@@ -223,7 +287,7 @@ class WakeWordDetector:
         """Release all resources."""
         self.stop()
         self._on_wake_callbacks.clear()
-        if self._fallback_active:
+        if self._fallback_active and not self._win32_hotkey_active:
             try:
                 import keyboard
                 keyboard.remove_all_hotkeys()

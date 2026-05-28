@@ -11,7 +11,13 @@ import wave
 from pathlib import Path
 from typing import Optional
 
-import numpy as np
+try:
+    import numpy as np
+except ImportError:
+    from typing import Any
+    class DummyNumPy:
+        ndarray = Any
+    np = DummyNumPy()
 
 from penelope.core.event_bus import get_event_bus
 from penelope.utils.constants import EventType
@@ -142,8 +148,7 @@ class TextToSpeech:
             elif self._sapi_available:
                 success = self._speak_sapi(text)
             else:
-                log.error("No TTS engine available")
-                success = False
+                success = self._speak_powershell(text)
 
             await self.bus.emit(EventType.TTS_FINISHED, text=text, success=success)
             return success
@@ -226,6 +231,29 @@ class TextToSpeech:
             log.error(f"SAPI5 error: {e}")
             return False
 
+    def _speak_powershell(self, text: str) -> bool:
+        """Speak using native Windows SpeechSynthesizer via PowerShell."""
+        if platform.system() != "Windows":
+            return False
+        try:
+            escaped_text = text.replace("'", "''")
+            cmd = [
+                "powershell",
+                "-Command",
+                f"Add-Type -AssemblyName System.Speech; [System.Speech.Synthesis.SpeechSynthesizer]::new().Speak('{escaped_text}')"
+            ]
+            subprocess.run(
+                cmd,
+                capture_output=True,
+                creationflags=subprocess.CREATE_NO_WINDOW,
+                timeout=30
+            )
+            log.info("Speech synthesized successfully via native PowerShell SpeechSynthesizer")
+            return True
+        except Exception as e:
+            log.error(f"PowerShell native TTS failed: {e}")
+            return False
+
     def set_volume(self, scale: float) -> None:
         """
         Set the TTS volume scale.
@@ -238,7 +266,11 @@ class TextToSpeech:
 
     @property
     def is_available(self) -> bool:
-        return self._piper_available or self._sapi_available
+        return (
+            self._piper_available
+            or self._sapi_available
+            or platform.system() == "Windows"
+        )
 
     @property
     def engine_name(self) -> str:
@@ -246,4 +278,6 @@ class TextToSpeech:
             return "Piper TTS"
         elif self._sapi_available:
             return "Windows SAPI5"
+        elif platform.system() == "Windows":
+            return "Windows SpeechSynthesizer (PowerShell)"
         return "None"

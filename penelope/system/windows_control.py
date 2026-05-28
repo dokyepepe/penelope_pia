@@ -9,7 +9,10 @@ import time
 from pathlib import Path
 from typing import Dict, Optional
 
-import pyautogui
+try:
+    import pyautogui
+except ImportError:
+    pyautogui = None
 
 from penelope.auth.permissions import Permission, requires_permission
 from penelope.utils.constants import SCREENSHOTS_DIR
@@ -18,7 +21,8 @@ from penelope.utils.logger import get_logger
 log = get_logger(__name__)
 
 # Disable pyautogui fail-safe pause
-pyautogui.PAUSE = 0.1
+if pyautogui:
+    pyautogui.PAUSE = 0.1
 
 
 class WindowsControl:
@@ -116,20 +120,59 @@ class WindowsControl:
 
     def take_screenshot(self) -> Dict:
         """Take a screenshot and save to the screenshots directory."""
+        timestamp = time.strftime("%Y%m%d_%H%M%S")
+        filepath = SCREENSHOTS_DIR / f"screenshot_{timestamp}.png"
+        
+        # Try using pyautogui first
+        if pyautogui:
+            try:
+                screenshot = pyautogui.screenshot()
+                screenshot.save(str(filepath))
+                log.info(f"Screenshot saved via pyautogui: {filepath}")
+                return {
+                    "success": True,
+                    "message": "Captura de tela salva.",
+                    "path": str(filepath),
+                }
+            except Exception as e:
+                log.warning(f"Screenshot via pyautogui failed, trying native PowerShell: {e}")
+
+        # Fallback using native C#/PowerShell (requires no dependencies)
         try:
-            timestamp = time.strftime("%Y%m%d_%H%M%S")
-            filepath = SCREENSHOTS_DIR / f"screenshot_{timestamp}.png"
-            screenshot = pyautogui.screenshot()
-            screenshot.save(str(filepath))
-            log.info(f"Screenshot saved: {filepath}")
-            return {
-                "success": True,
-                "message": "Captura de tela salva.",
-                "path": str(filepath),
-            }
+            path_str = str(filepath).replace("\\", "/")
+            cmd = [
+                "powershell",
+                "-Command",
+                "[Reflection.Assembly]::LoadWithPartialName('System.Windows.Forms'); "
+                "[Reflection.Assembly]::LoadWithPartialName('System.Drawing'); "
+                "$screen = [System.Windows.Forms.Screen]::PrimaryScreen.Bounds; "
+                "$bitmap = New-Object System.Drawing.Bitmap($screen.Width, $screen.Height); "
+                "$graphics = [System.Drawing.Graphics]::FromImage($bitmap); "
+                "$graphics.CopyFromScreen($screen.X, $screen.Y, 0, 0, $bitmap.Size); "
+                "$bitmap.Save('" + path_str + "', [System.Drawing.Imaging.ImageFormat]::Png); "
+                "$graphics.Dispose(); "
+                "$bitmap.Dispose();"
+            ]
+            result = subprocess.run(
+                cmd,
+                capture_output=True,
+                creationflags=subprocess.CREATE_NO_WINDOW,
+                timeout=15
+            )
+            if result.returncode == 0 and filepath.exists():
+                log.info(f"Screenshot saved via native PowerShell: {filepath}")
+                return {
+                    "success": True,
+                    "message": "Captura de tela salva.",
+                    "path": str(filepath),
+                }
+            else:
+                stderr = result.stderr.decode("utf-8", errors="ignore")
+                log.error(f"Native screenshot via PowerShell failed: {stderr}")
         except Exception as e:
-            log.error(f"Screenshot failed: {e}")
-            return {"success": False, "message": "Falha na captura de tela."}
+            log.error(f"Native screenshot failed: {e}")
+            
+        return {"success": False, "message": "Falha na captura de tela."}
 
     def shutdown(self, delay_seconds: int = 30) -> Dict:
         """
@@ -227,12 +270,18 @@ class WindowsControl:
         """Toggle airplane mode (requires special handling on Win11)."""
         try:
             # Use keyboard shortcut approach
-            pyautogui.hotkey("win", "a")  # Open Action Center
-            time.sleep(0.5)
-            return {
-                "success": True,
-                "message": "Painel de ações aberto. Altere o modo avião manualmente.",
-            }
+            if pyautogui:
+                pyautogui.hotkey("win", "a")  # Open Action Center
+                time.sleep(0.5)
+                return {
+                    "success": True,
+                    "message": "Painel de ações aberto. Altere o modo avião manualmente.",
+                }
+            else:
+                return {
+                    "success": True,
+                    "message": "Para alternar o Modo Avião, abra o Painel de Ações pressionando Windows+A no teclado.",
+                }
         except Exception as e:
             return {"success": False, "message": str(e)}
 

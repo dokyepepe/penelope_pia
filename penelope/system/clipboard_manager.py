@@ -93,15 +93,32 @@ class ClipboardManager:
 
     def _check_clipboard(self) -> None:
         """Check if clipboard content has changed."""
+        content = ""
         try:
             import pyperclip
             content = pyperclip.paste()
+        except ImportError:
+            try:
+                import subprocess
+                result = subprocess.run(
+                    ["powershell", "-Command", "Get-Clipboard"],
+                    capture_output=True,
+                    text=True,
+                    timeout=5,
+                    creationflags=subprocess.CREATE_NO_WINDOW
+                )
+                if result.returncode == 0:
+                    content = result.stdout
+            except Exception as e:
+                log.debug(f"Native clipboard check failed: {e}")
+        except Exception as e:
+            log.debug(f"Clipboard check failed: {e}")
 
-            if content and content != self._last_content:
+        if content:
+            content_stripped = content.strip()
+            if content_stripped and content_stripped != self._last_content.strip():
                 self._last_content = content
                 self._save_entry(content)
-        except Exception:
-            pass
 
     def _save_entry(self, content: str) -> None:
         """Save a clipboard entry to the database."""

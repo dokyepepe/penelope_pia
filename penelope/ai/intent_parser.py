@@ -42,6 +42,9 @@ COMMAND_PATTERNS: List[Tuple[str, IntentCategory, str, List[str]]] = [
     (r"(?:travar?|bloquear?)\s+(?:a\s+)?(?:sessão|tela)", IntentCategory.SESSION_CONTROL, "lock_session", []),
     (r"qual\s+(?:[ée]|é)\s+meu\s+ip", IntentCategory.INFORMATION, "get_ip", []),
     (r"que horas?\s+s[aã]o", IntentCategory.INFORMATION, "get_time", []),
+    (r"(?:qual\s+(?:[ée]|é)\s+a\s+)?data\s+(?:de\s+)?hoje|que\s+dia\s+(?:[ée]|é)\s+hoje", IntentCategory.INFORMATION, "get_date", []),
+    (r"(?:como\s+)?est[aá]\s+(?:a\s+)?bateria|status\s+da\s+bateria|n[ií]vel\s+da\s+bateria", IntentCategory.INFORMATION, "get_battery", []),
+    (r"ajuda|lista\s+de\s+comandos|o\s+que\s+voc[eê]\s+pode\s+fazer|comandos\s+dispon[ií]veis", IntentCategory.INFORMATION, "list_commands", []),
     (r"(?:modo\s+)?avi[aã]o", IntentCategory.SYSTEM_COMMAND, "airplane_mode", []),
 
     # App control

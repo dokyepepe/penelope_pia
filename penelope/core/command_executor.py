@@ -32,6 +32,9 @@ ACTION_PERMISSIONS: Dict[str, str] = {
     "open_task_manager": "task_manager",
     "get_ip": "network_info",
     "get_time": "system_info",
+    "get_date": "system_info",
+    "get_battery": "system_info",
+    "list_commands": "conversation",
     "lock_session": "lock_session",
     "organize_windows": "window_management",
     "close_all_except": "window_management",
@@ -211,6 +214,52 @@ class CommandExecutor:
         if action == "get_time":
             result = self.windows.get_current_time()
             return result.get("message", "Não sei que horas são.")
+
+        if action == "get_date":
+            import datetime
+            d = datetime.datetime.now()
+            semana = ["Segunda-feira", "Terça-feira", "Quarta-feira", "Quinta-feira", "Sexta-feira", "Sábado", "Domingo"]
+            meses = ["Janeiro", "Fevereiro", "Março", "Abril", "Maio", "Junho", "Julho", "Agosto", "Setembro", "Outubro", "Novembro", "Dezembro"]
+            weekday = semana[d.weekday()]
+            month = meses[d.month - 1]
+            return f"Hoje é {weekday}, dia {d.day} de {month} de {d.year}."
+
+        if action == "get_battery":
+            try:
+                import psutil
+                battery = psutil.sensors_battery()
+                if battery:
+                    percent = battery.percent
+                    plugged = battery.power_plugged
+                    plugged_str = "conectada à tomada" if plugged else "desconectada da tomada"
+                    return f"A bateria está em {percent}% e está atualmente {plugged_str}."
+                else:
+                    return "Não consegui detectar uma bateria neste computador. Ele pode ser um desktop."
+            except Exception:
+                try:
+                    import subprocess
+                    result = subprocess.run(
+                        ["wmic", "path", "Win32_Battery", "get", "EstimatedChargeRemaining"],
+                        capture_output=True,
+                        text=True,
+                        creationflags=subprocess.CREATE_NO_WINDOW
+                    )
+                    lines = [line.strip() for line in result.stdout.splitlines() if line.strip()]
+                    if len(lines) > 1 and lines[1].isdigit():
+                        return f"O nível da bateria é {lines[1]}%."
+                except Exception:
+                    pass
+                return "Não foi possível obter o status da bateria."
+
+        if action == "list_commands":
+            return (
+                "Estes são alguns dos comandos locais que posso executar: "
+                "abrir ou fechar aplicativos, ajustar e silenciar o volume, "
+                "tirar capturas de tela (screenshot), bloquear a sessão do computador, "
+                "esvaziar a lixeira, informar as horas ou a data de hoje, "
+                "verificar o status da bateria e o seu endereço IP, "
+                "e alternar entre os modos de operação como Trabalho, Silencioso e Noite."
+            )
 
         # ── Mode Changes ──
         if action.startswith("mode_"):

@@ -6,7 +6,10 @@ Manages desktop windows: list, snap, close, organize.
 import ctypes
 from typing import Dict, List, Optional
 
-import pyautogui
+try:
+    import pyautogui
+except ImportError:
+    pyautogui = None
 
 from penelope.utils.logger import get_logger
 
@@ -111,22 +114,45 @@ class WindowManager:
 
     def organize_windows(self) -> Dict:
         """
-        Auto-organize open windows using Windows Snap.
+        Auto-organize open windows.
 
-        Uses Win+Tab or cascade arrangement.
+        Uses Win+Z snap layout if pyautogui is available, otherwise tiles windows horizontally natively.
         """
+        if pyautogui:
+            try:
+                pyautogui.hotkey("win", "z")
+                return {"success": True, "message": "Layout de janelas ativado."}
+            except Exception:
+                pass
+                
+        # Native fallback using Shell.Application COM Object
         try:
-            # Trigger Windows snap layout
-            pyautogui.hotkey("win", "z")
-            return {"success": True, "message": "Layout de janelas ativado."}
+            import subprocess
+            subprocess.run(
+                ["powershell", "-Command", "(New-Object -ComObject shell.application).TileHorizontally()"],
+                creationflags=subprocess.CREATE_NO_WINDOW
+            )
+            return {"success": True, "message": "Janelas organizadas horizontalmente."}
         except Exception as e:
-            log.error(f"Failed to organize windows: {e}")
+            log.error(f"Failed to organize windows natively: {e}")
             return {"success": False, "message": str(e)}
 
     def minimize_all(self) -> Dict:
         """Minimize all windows (show desktop)."""
+        if pyautogui:
+            try:
+                pyautogui.hotkey("win", "d")
+                return {"success": True, "message": "Todas as janelas minimizadas."}
+            except Exception:
+                pass
+                
+        # Native fallback
         try:
-            pyautogui.hotkey("win", "d")
+            import subprocess
+            subprocess.run(
+                ["powershell", "-Command", "(New-Object -ComObject shell.application).MinimizeAll()"],
+                creationflags=subprocess.CREATE_NO_WINDOW
+            )
             return {"success": True, "message": "Todas as janelas minimizadas."}
         except Exception as e:
             return {"success": False, "message": str(e)}
@@ -161,11 +187,14 @@ class WindowManager:
                 actions.append("Zoom/Teams não encontrado")
 
         # Enable Focus Assist (Do Not Disturb)
-        try:
-            pyautogui.hotkey("win", "a")
-            actions.append("Painel de ações aberto")
-        except Exception:
-            pass
+        if pyautogui:
+            try:
+                pyautogui.hotkey("win", "a")
+                actions.append("Painel de ações aberto")
+            except Exception:
+                pass
+        else:
+            actions.append("Pressione Windows+A para alternar Focus Assist")
 
         return {
             "success": True,

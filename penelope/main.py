@@ -14,6 +14,14 @@ import threading
 import time
 from typing import Optional
 
+# Reconfigure standard streams to UTF-8 on Windows to prevent encoding mismatches
+if sys.platform == "win32":
+    try:
+        sys.stdin.reconfigure(encoding="utf-8", errors="ignore")
+        sys.stdout.reconfigure(encoding="utf-8", errors="ignore")
+    except Exception:
+        pass
+
 from penelope.utils.constants import UserLevel, SystemMode
 from penelope.utils.logger import setup_logging, get_logger
 
@@ -165,7 +173,7 @@ async def _main_loop() -> None:
     Main interaction loop.
 
     Flow:
-    1. Wait for wake word (or Alt+Space)
+    1. Wait for wake word (or Alt+Space) [Only if audio is available]
     2. Authenticate user
     3. Listen for command
     4. Parse intent
@@ -174,69 +182,99 @@ async def _main_loop() -> None:
     7. Check session timeout
     8. Repeat
     """
-    # Start audio recording for wake word
-    _audio_manager.register_callback(_wake_word.on_audio_chunk)
-    _audio_manager.start_recording()
-    _wake_word.start()
+    # Check if audio/mic recording is available
+    audio_available = False
+    try:
+        import sounddevice as sd
+        import numpy as np
+        audio_available = True
+    except ImportError:
+        log.warning("Sistema de áudio indisponível (sounddevice/numpy ausentes) — rodando em modo texto puro.")
+
+    # Start audio recording for wake word if audio is available
+    if audio_available:
+        _audio_manager.register_callback(_wake_word.on_audio_chunk)
+        _audio_manager.start_recording()
+        _wake_word.start()
 
     # Wake word event trigger
     wake_event = asyncio.Event()
 
-    def on_wake():
-        """Called from the wake word thread when triggered."""
-        # Schedule the event set on the event loop
-        try:
-            loop = asyncio.get_running_loop()
-            loop.call_soon_threadsafe(wake_event.set)
-        except RuntimeError:
-            wake_event.set()
+    if audio_available:
+        def on_wake():
+            """Called from the wake word thread when triggered."""
+            try:
+                loop = asyncio.get_running_loop()
+                loop.call_soon_threadsafe(wake_event.set)
+            except RuntimeError:
+                wake_event.set()
 
-    _wake_word.on_wake(on_wake)
-
-    log.info("Loop principal ativo — escutando wake word...")
+        _wake_word.on_wake(on_wake)
+        log.info("Loop principal ativo — escutando wake word...")
+    else:
+        # If no audio but Win32 hotkey fallback was registered, we can still listen for it
+        if _wake_word.is_fallback:
+            def on_wake_hotkey():
+                try:
+                    loop = asyncio.get_running_loop()
+                    loop.call_soon_threadsafe(wake_event.set)
+                except RuntimeError:
+                    wake_event.set()
+            _wake_word.on_wake(on_wake_hotkey)
+        log.info("Loop principal ativo em modo TEXTO — digite seus comandos.")
 
     while not _shutdown_event.is_set():
         try:
-            # ── 1. Wait for wake word ──
-            wake_event.clear()
+            if audio_available:
+                # ── 1. Wait for wake word ──
+                wake_event.clear()
 
-            # Use a timeout so we can check shutdown and session timeout
-            try:
-                await asyncio.wait_for(
-                    _wait_for_event(wake_event),
-                    timeout=5.0,
-                )
-            except asyncio.TimeoutError:
-                # Periodic housekeeping
+                # Use a timeout so we can check shutdown and session timeout
+                try:
+                    await asyncio.wait_for(
+                        _wait_for_event(wake_event),
+                        timeout=5.0,
+                    )
+                except asyncio.TimeoutError:
+                    # Periodic housekeeping
+                    await _session_manager.check_timeout()
+                    continue
+
+                if _shutdown_event.is_set():
+                    break
+
+                log.info("🎤 Wake word detectado!")
+            else:
+                # In text mode, we check timeout and let stdin block
                 await _session_manager.check_timeout()
-                continue
-
-            if _shutdown_event.is_set():
-                break
-
-            log.info("🎤 Wake word detectado!")
+                await asyncio.sleep(0.05)
 
             # ── 2. Authenticate ──
             session = _session_manager.current
 
             if session is None or not _session_manager.is_active:
-                session = await _authenticate_user()
+                session = await _authenticate_user(audio_available)
                 if session is None:
-                    continue  # Auth failed, go back to listening
+                    if not audio_available:
+                        await asyncio.sleep(1.0)
+                    continue  # Auth failed
 
             # ── 3. Listen for command ──
-            log.info(f"Escutando comando de {session.user_name}...")
-            if _tts and _tts.is_available:
-                greeting = _llm_client.get_greeting(
-                    session.user_name, session.user_level
-                ) if _llm_client else f"Olá, {session.user_name}."
-                # Only greet on new session (first command)
-                if session.elapsed_minutes < 0.1:
-                    await _tts.speak(greeting)
+            if audio_available:
+                log.info(f"Escutando comando de {session.user_name}...")
+                if _tts and _tts.is_available:
+                    greeting = _llm_client.get_greeting(
+                        session.user_name, session.user_level
+                    ) if _llm_client else f"Olá, {session.user_name}."
+                    # Only greet on new session (first command)
+                    if session.elapsed_minutes < 0.1:
+                        await _tts.speak(greeting)
 
-            transcription = await _listen_and_transcribe()
+            transcription = await _listen_and_transcribe(prompt="digite o comando")
             if not transcription:
                 log.debug("Transcrição vazia — voltando a escutar")
+                if not audio_available:
+                    await asyncio.sleep(1.0)
                 continue
 
             log.info(f"📝 Transcrito: '{transcription}'")
@@ -281,7 +319,7 @@ async def _wait_for_event(event: asyncio.Event) -> None:
     await event.wait()
 
 
-async def _authenticate_user():
+async def _authenticate_user(audio_available: bool = True):
     """
     Run the authentication flow.
 
@@ -293,10 +331,10 @@ async def _authenticate_user():
     if _tts and _tts.is_available:
         await _tts.speak("Olá! Por favor, diga sua chave de acesso.")
     else:
-        print("  PENÉLOPE: Olá! Por favor, diga sua chave de acesso.")
+        print("  PENÉLOPE: Olá! Por favor, digite sua chave de acesso.")
 
     # Record passphrase
-    passphrase = await _listen_and_transcribe(max_duration=8.0)
+    passphrase = await _listen_and_transcribe(max_duration=8.0, prompt="digite sua chave de acesso")
     if not passphrase:
         if _tts and _tts.is_available:
             await _tts.speak("Não entendi. Tente novamente.")
@@ -331,19 +369,20 @@ async def _authenticate_user():
     return session
 
 
-async def _listen_and_transcribe(max_duration: float = 10.0) -> str:
+async def _listen_and_transcribe(max_duration: float = 10.0, prompt: str = "digite o comando") -> str:
     """
     Record audio and transcribe it.
 
     Args:
         max_duration: Maximum recording time in seconds.
+        prompt: Prompt string used in fallback text mode.
 
     Returns:
         Transcribed text, or empty string on failure.
     """
     if not _stt or not _stt.is_loaded:
         # Fallback: read from stdin
-        print("  [STT offline — digite o comando]: ", end="", flush=True)
+        print(f"  [Texto — {prompt}]: ", end="", flush=True)
         try:
             loop = asyncio.get_running_loop()
             text = await loop.run_in_executor(None, _read_input_line)
