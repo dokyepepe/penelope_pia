@@ -75,10 +75,22 @@ class CommandExecutor:
         windows_control: Optional[WindowsControl] = None,
         llm_client: Optional[LLMClient] = None,
         audio_manager: Optional[Any] = None,
+        window_manager: Optional[Any] = None,
+        clipboard_manager: Optional[Any] = None,
     ) -> None:
         self.windows = windows_control or WindowsControl()
         self.llm = llm_client
         self.audio = audio_manager
+        
+        # Instantiate window and clipboard managers natively
+        from penelope.system.window_manager import WindowManager
+        from penelope.system.clipboard_manager import ClipboardManager
+        self.window_manager = window_manager or WindowManager()
+        self.clipboard_manager = clipboard_manager or ClipboardManager()
+        
+        # Start monitoring clipboard history in background
+        self.clipboard_manager.start()
+        
         self.bus = get_event_bus()
         self._current_mode = SystemMode.NORMAL
 
@@ -261,6 +273,22 @@ class CommandExecutor:
                 "e alternar entre os modos de operação como Trabalho, Silencioso e Noite."
             )
 
+        if action == "clipboard_history":
+            try:
+                history = self.clipboard_manager.get_history(limit=3)
+                if not history:
+                    return "Seu histórico da área de transferência está vazio."
+                items = []
+                for idx, entry in enumerate(history, 1):
+                    content = entry.get("content", "").strip()
+                    if len(content) > 60:
+                        content = content[:57] + "..."
+                    items.append(f"{idx}: \"{content}\"")
+                return "Últimos itens copiados: " + "; ".join(items)
+            except Exception as e:
+                log.error(f"Failed to get clipboard history: {e}")
+                return "Não consegui ler o histórico da área de transferência."
+
         # ── Mode Changes ──
         if action.startswith("mode_"):
             return await self._handle_mode_change(action)
@@ -271,11 +299,21 @@ class CommandExecutor:
 
         # ── Window Management ──
         if action == "organize_windows":
-            return "Organizando janelas. Funcionalidade em desenvolvimento."
+            result = self.window_manager.organize_windows()
+            return result.get("message", "Pronto.")
 
         if action == "close_all_except":
             app = entities.get("app_name", "")
-            return f"Fechando tudo exceto {app}. Funcionalidade em desenvolvimento."
+            result = self.window_manager.close_all_except(app)
+            return result.get("message", "Pronto.")
+
+        if action == "meeting_mode":
+            result = self.window_manager.enter_meeting_mode()
+            return result.get("message", "Pronto.")
+
+        if action == "presentation_mode":
+            result = self.window_manager.enter_presentation_mode()
+            return result.get("message", "Pronto.")
 
         # ── Automation / Routines ──
         if action == "sleep_routine":

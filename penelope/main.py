@@ -422,6 +422,13 @@ def _shutdown() -> None:
     """Shut down all modules gracefully."""
     log.info("Encerrando Penélope...")
 
+    # Stop clipboard manager
+    if _command_executor and hasattr(_command_executor, "clipboard_manager") and _command_executor.clipboard_manager:
+        try:
+            _command_executor.clipboard_manager.stop()
+        except Exception:
+            pass
+
     # Stop in reverse order of initialization
     if _health_monitor:
         _health_monitor.stop()
