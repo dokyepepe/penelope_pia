@@ -111,12 +111,14 @@ class TrayIcon:
 
     def _register_events(self) -> None:
         """Register event bus handlers for state updates."""
-        self.bus.on(EventType.WAKE_WORD_DETECTED, lambda **_: self.set_state(HudState.LISTENING))
-        self.bus.on(EventType.LISTENING_STOPPED, lambda **_: self.set_state(HudState.PROCESSING))
-        self.bus.on(EventType.LLM_RESPONSE_COMPLETE, lambda **_: self.set_state(HudState.IDLE))
-        self.bus.on(EventType.TTS_STARTED, lambda **_: self.set_state(HudState.SPEAKING))
-        self.bus.on(EventType.TTS_FINISHED, lambda **_: self.set_state(HudState.IDLE))
-        self.bus.on(EventType.LLM_OFFLINE, lambda **_: self.set_state(HudState.ERROR))
+        from penelope.ui.event_bridge import QtEventBridge
+        self.bridge = QtEventBridge()
+        self.bridge.wake_word_detected.connect(lambda: self.set_state(HudState.LISTENING))
+        self.bridge.listening_stopped.connect(lambda: self.set_state(HudState.PROCESSING))
+        self.bridge.llm_response_complete.connect(lambda _: self.set_state(HudState.IDLE))
+        self.bridge.tts_started.connect(lambda: self.set_state(HudState.SPEAKING))
+        self.bridge.tts_finished.connect(lambda: self.set_state(HudState.IDLE))
+        self.bridge.llm_offline.connect(lambda: self.set_state(HudState.ERROR))
 
     def set_state(self, state: HudState) -> None:
         """Update the tray icon state."""

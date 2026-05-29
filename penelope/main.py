@@ -47,6 +47,14 @@ _health_monitor = None
 _windows_control = None
 _shutdown_event = threading.Event()
 
+# UI references
+_app = None
+_hud = None
+_tray = None
+_radial_menu = None
+_asyncio_loop = None
+_asyncio_thread = None
+
 
 def main() -> None:
     """Main entry point for the Penélope system."""
@@ -66,21 +74,49 @@ def main() -> None:
             log.error("Setup wizard failed or cancelled")
             sys.exit(1)
 
-    # ── 3. Initialize all modules ──
+    # ── 3. Initialize QApplication first (required by Qt) ──
+    from PyQt6.QtWidgets import QApplication
+    global _app
+    _app = QApplication(sys.argv)
+    _app.setQuitOnLastWindowClosed(False)
+
+    # ── 4. Initialize all modules ──
     _init_all()
 
-    # ── 4. Register signal handlers ──
+    # ── 5. Initialize UI Components ──
+    _init_ui()
+
+    # ── 6. Register signal handlers ──
     signal.signal(signal.SIGINT, _signal_handler)
     signal.signal(signal.SIGTERM, _signal_handler)
 
-    # ── 5. Run main loop ──
+    # ── 7. Run background asyncio loop ──
     log.info("═══════════════════════════════════════════")
     log.info("  PENÉLOPE ONLINE — Aguardando wake word...")
     log.info("  (ou Alt+Space como atalho)")
     log.info("═══════════════════════════════════════════")
 
+    global _asyncio_loop, _asyncio_thread
+    _asyncio_loop = asyncio.new_event_loop()
+
+    def run_asyncio_loop(loop):
+        asyncio.set_event_loop(loop)
+        try:
+            loop.run_until_complete(_main_loop())
+        except Exception as e:
+            log.error(f"Asyncio main loop crash: {e}", exc_info=True)
+
+    _asyncio_thread = threading.Thread(
+        target=run_asyncio_loop,
+        args=(_asyncio_loop,),
+        name="penelope_async_core",
+        daemon=True
+    )
+    _asyncio_thread.start()
+
+    # ── 8. Start PyQt6 Event Loop on Main Thread ──
     try:
-        asyncio.run(_main_loop())
+        sys.exit(_app.exec())
     except KeyboardInterrupt:
         log.info("Interrupted by keyboard")
     finally:
@@ -152,6 +188,104 @@ def _init_all() -> None:
     _health_monitor.start()
 
     log.info("✓ Todos os módulos inicializados")
+
+
+def _init_ui() -> None:
+    """Initialize PyQt6 user interface components."""
+    global _hud, _tray, _radial_menu
+    log.info("Inicializando interface gráfica (PyQt6)...")
+
+    # Register HUD_UPDATE listener on EventBus
+    from penelope.utils.constants import EventType
+    from penelope.core.event_bus import get_event_bus
+    bus = get_event_bus()
+    bus.on(EventType.HUD_UPDATE, _on_hud_update)
+
+    # 1. Tray Icon
+    from penelope.ui.tray_icon import TrayIcon
+    _tray = TrayIcon()
+    _tray.initialize()
+
+    # 2. HUD Overlay
+    from penelope.ui.hud_overlay import HudOverlay
+    _hud = HudOverlay()
+    _hud.initialize()
+
+    # 3. Radial Menu
+    from penelope.ui.radial_menu import RadialMenu
+    _radial_menu = RadialMenu()
+    _radial_menu.initialize()
+
+    # Connect radial menu triggers
+    def handle_radial_action(slice_data: dict) -> None:
+        action = slice_data.get("action")
+        target = slice_data.get("target")
+        if _command_executor and _session_manager:
+            session = _session_manager.current
+            if session:
+                from penelope.ai.intent_parser import ParsedIntent
+                from penelope.utils.constants import IntentCategory
+                
+                category = IntentCategory.SYSTEM_COMMAND
+                if action == "clipboard_history":
+                    category = IntentCategory.INFORMATION
+                elif action == "lock_session":
+                    category = IntentCategory.SESSION_CONTROL
+                elif action == "open_settings":
+                    category = IntentCategory.CONFIGURATION
+                
+                intent = ParsedIntent(
+                    raw_text=slice_data.get("label", ""),
+                    category=category,
+                    action=action,
+                    entities={"app_name": target} if target else {},
+                    confidence=1.0,
+                    requires_llm=False
+                )
+                
+                if _asyncio_loop:
+                    asyncio.run_coroutine_threadsafe(
+                        _execute_radial_intent(intent, session),
+                        _asyncio_loop
+                    )
+
+    _radial_menu.set_action_handler(handle_radial_action)
+
+
+async def _execute_radial_intent(intent, session) -> None:
+    """Execute radial menu actions on the background thread."""
+    response = await _command_executor.execute(intent, session)
+    if _tts and _tts.is_available:
+        await _tts.speak(response)
+    else:
+        log.info(f"Radial Action Executed: {response}")
+
+
+def _on_hud_update(action: str = "", **kwargs) -> None:
+    """Handle HUD updates and system trays events from main thread."""
+    log.info(f"HUD Update Event: {action}")
+    if action == "toggle_hud":
+        if _hud:
+            _hud.toggle_visibility()
+    elif action == "show_status":
+        if _hud:
+            _hud.show()
+            if _health_monitor:
+                snapshot = _health_monitor.get_snapshot()
+                if snapshot:
+                    summary = (
+                        f"Status do Sistema:\n"
+                        f"CPU: {snapshot.cpu_percent:.1f}%\n"
+                        f"RAM: {snapshot.ram_percent:.1f}%\n"
+                        f"Disco: {snapshot.disk_used_gb:.1f}/{snapshot.disk_total_gb:.1f} GB"
+                    )
+                else:
+                    summary = "Status do Sistema: Coletando informações..."
+                _hud.set_response(summary)
+    elif action == "request_quit_auth":
+        log.info("Quit requested via tray menu")
+        if _app:
+            _app.quit()
 
 
 def _connect_llm_sync() -> None:
@@ -421,6 +555,24 @@ def _signal_handler(signum, frame) -> None:
 def _shutdown() -> None:
     """Shut down all modules gracefully."""
     log.info("Encerrando Penélope...")
+
+    # Clean up UI components
+    global _hud, _tray, _radial_menu
+    if _hud:
+        try:
+            _hud.cleanup()
+        except Exception:
+            pass
+    if _tray:
+        try:
+            _tray.cleanup()
+        except Exception:
+            pass
+    if _radial_menu:
+        try:
+            _radial_menu.cleanup()
+        except Exception:
+            pass
 
     # Stop clipboard manager
     if _command_executor and hasattr(_command_executor, "clipboard_manager") and _command_executor.clipboard_manager:

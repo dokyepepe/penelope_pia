@@ -96,6 +96,23 @@ class RadialMenu:
                     self.setFixedSize(size, size)
                     self._hovered_slice = -1
 
+                from PyQt6.QtCore import pyqtSlot
+                @pyqtSlot()
+                def show_at_cursor_widget(self):
+                    try:
+                        from PyQt6.QtGui import QCursor
+                        pos = QCursor.pos()
+                        x = pos.x() - self.width() // 2
+                        y = pos.y() - self.height() // 2
+                        self.move(x, y)
+                        self.show()
+                        self.activateWindow()
+                        self.menu._visible = True
+                        self.menu.bus.emit_sync(EventType.RADIAL_MENU_OPENED)
+                        log.debug("Radial menu shown at cursor via slot")
+                    except Exception as e:
+                        log.error(f"Failed to show radial menu widget: {e}")
+
                 def paintEvent(self, event):
                     painter = QPainter(self)
                     painter.setRenderHint(QPainter.RenderHint.Antialiasing)
@@ -196,6 +213,15 @@ class RadialMenu:
             self._window = RadialWidget(self)
             self._initialized = True
             log.info("Radial menu initialized")
+
+            # Register global hotkey
+            try:
+                import keyboard
+                keyboard.add_hotkey(self.hotkey, self.show_at_cursor)
+                log.info(f"Radial menu hotkey registered: {self.hotkey}")
+            except Exception as e:
+                log.warning(f"Could not register keyboard hotkey for radial menu: {e}")
+
             return True
 
         except ImportError:
@@ -210,23 +236,14 @@ class RadialMenu:
         if not self._initialized or not self._window:
             return
 
-        try:
-            from PyQt6.QtGui import QCursor
+        import threading
+        from PyQt6.QtCore import QCoreApplication
+        if QCoreApplication.instance() and threading.current_thread() != QCoreApplication.instance().thread().currentThread():
+            from PyQt6.QtCore import QMetaObject, Qt
+            QMetaObject.invokeMethod(self._window, "show_at_cursor_widget", Qt.ConnectionType.QueuedConnection)
+            return
 
-            pos = QCursor.pos()
-            x = pos.x() - self._window.width() // 2
-            y = pos.y() - self._window.height() // 2
-
-            self._window.move(x, y)
-            self._window.show()
-            self._window.activateWindow()
-            self._visible = True
-
-            self.bus.emit_sync(EventType.RADIAL_MENU_OPENED)
-            log.debug("Radial menu shown at cursor")
-
-        except Exception as e:
-            log.error(f"Failed to show radial menu: {e}")
+        self._window.show_at_cursor_widget()
 
     def hide_menu(self) -> None:
         """Hide the radial menu."""

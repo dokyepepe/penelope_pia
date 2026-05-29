@@ -208,13 +208,15 @@ class HudOverlay:
 
     def _register_events(self) -> None:
         """Register event handlers for HUD updates."""
-        self.bus.on(EventType.TRANSCRIPTION_READY, self._on_transcription)
-        self.bus.on(EventType.LLM_RESPONSE_CHUNK, self._on_response_chunk)
-        self.bus.on(EventType.LLM_RESPONSE_COMPLETE, self._on_response_complete)
-        self.bus.on(EventType.AUTH_SUCCESS, self._on_auth_success)
-        self.bus.on(EventType.SESSION_EXPIRED, self._on_session_expired)
-        self.bus.on(EventType.MODE_CHANGED, self._on_mode_changed)
-        self.bus.on(EventType.WAKE_WORD_DETECTED, self._on_wake_word)
+        from penelope.ui.event_bridge import QtEventBridge
+        self.bridge = QtEventBridge()
+        self.bridge.transcription_ready.connect(self._on_transcription)
+        self.bridge.llm_response_chunk.connect(self._on_response_chunk)
+        self.bridge.llm_response_complete.connect(self._on_response_complete)
+        self.bridge.auth_success.connect(self._on_auth_success)
+        self.bridge.session_expired.connect(self._on_session_expired)
+        self.bridge.mode_changed.connect(self._on_mode_changed)
+        self.bridge.wake_word_detected.connect(self._on_wake_word)
 
     def _on_wake_word(self, **kwargs) -> None:
         """Handle wake word detection."""
