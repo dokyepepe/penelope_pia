@@ -54,6 +54,7 @@ _tray = None
 _radial_menu = None
 _asyncio_loop = None
 _asyncio_thread = None
+_resource_optimizer = None
 
 
 def main() -> None:
@@ -186,6 +187,12 @@ def _init_all() -> None:
     from penelope.persistence.health_monitor import HealthMonitor
     _health_monitor = HealthMonitor(check_interval=30.0)
     _health_monitor.start()
+
+    # ── Resource Optimizer ──
+    global _resource_optimizer
+    from penelope.core.resource_optimizer import ResourceOptimizer
+    _resource_optimizer = ResourceOptimizer(sys.modules[__name__])
+    _resource_optimizer.start()
 
     log.info("✓ Todos os módulos inicializados")
 
@@ -556,8 +563,13 @@ def _shutdown() -> None:
     """Shut down all modules gracefully."""
     log.info("Encerrando Penélope...")
 
-    # Clean up UI components
-    global _hud, _tray, _radial_menu
+    # Clean up UI components and optimizer
+    global _hud, _tray, _radial_menu, _resource_optimizer
+    if _resource_optimizer:
+        try:
+            _resource_optimizer.stop()
+        except Exception:
+            pass
     if _hud:
         try:
             _hud.cleanup()

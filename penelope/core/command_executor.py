@@ -357,6 +357,7 @@ class CommandExecutor:
             "mode_silent": SystemMode.SILENT,
             "mode_night": SystemMode.NIGHT,
             "mode_entertainment": SystemMode.ENTERTAINMENT,
+            "mode_game": SystemMode.GAME,
             "mode_power": SystemMode.POWER,
             "mode_normal": SystemMode.NORMAL,
         }
@@ -366,6 +367,7 @@ class CommandExecutor:
             SystemMode.SILENT: "Silencioso",
             SystemMode.NIGHT: "Noite",
             SystemMode.ENTERTAINMENT: "Entretenimento",
+            SystemMode.GAME: "Jogos",
             SystemMode.POWER: "Potência Total",
             SystemMode.NORMAL: "Normal",
         }

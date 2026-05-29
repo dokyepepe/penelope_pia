@@ -54,7 +54,8 @@ COMMAND_PATTERNS: List[Tuple[str, IntentCategory, str, List[str]]] = [
     (r"(?:modo|entra|ativa)\s+(?:no\s+)?(?:modo\s+)?trabalho", IntentCategory.MODE_CHANGE, "mode_work", []),
     (r"(?:modo|entra|ativa)\s+(?:no\s+)?(?:modo\s+)?(?:silencioso|silêncio)", IntentCategory.MODE_CHANGE, "mode_silent", []),
     (r"(?:modo|entra|ativa)\s+(?:no\s+)?(?:modo\s+)?noite", IntentCategory.MODE_CHANGE, "mode_night", []),
-    (r"(?:modo|entra|ativa)\s+(?:no\s+)?(?:modo\s+)?(?:entretenimento|game|jogo)", IntentCategory.MODE_CHANGE, "mode_entertainment", []),
+    (r"(?:modo|entra|ativa)\s+(?:no\s+)?(?:modo\s+)?entretenimento", IntentCategory.MODE_CHANGE, "mode_entertainment", []),
+    (r"(?:modo|entra|ativa)\s+(?:no\s+)?(?:modo\s+)?(?:game|jogo)", IntentCategory.MODE_CHANGE, "mode_game", []),
     (r"(?:potência total|modo jarvis|autonomia máxima)", IntentCategory.MODE_CHANGE, "mode_power", []),
     (r"(?:modo\s+)?normal", IntentCategory.MODE_CHANGE, "mode_normal", []),
 
