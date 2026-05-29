@@ -60,6 +60,8 @@ class HudOverlay:
         self._label_user_badge = None
         self._label_mode = None
         self._label_time = None
+        self._label_cpu = None
+        self._label_ram = None
 
         self.bus = get_event_bus()
 
@@ -139,6 +141,14 @@ class HudOverlay:
             self._label_time.setObjectName("hud_status")
             status_bar.addWidget(self._label_time)
 
+            self._label_cpu = QLabel("CPU: --%")
+            self._label_cpu.setObjectName("hud_status")
+            status_bar.addWidget(self._label_cpu)
+
+            self._label_ram = QLabel("RAM: --%")
+            self._label_ram.setObjectName("hud_status")
+            status_bar.addWidget(self._label_ram)
+
             status_bar.addStretch()
 
             self._label_status = QLabel("● Online")
@@ -155,10 +165,15 @@ class HudOverlay:
             self._initialized = True
             self._visible = True
 
-            # Timer for clock update
+            # Timer for clock update (every 1s)
             self._timer = QTimer()
             self._timer.timeout.connect(self._update_clock)
             self._timer.start(1000)
+
+            # Timer for system stats update (every 2s)
+            self._stats_timer = QTimer()
+            self._stats_timer.timeout.connect(self._update_system_stats)
+            self._stats_timer.start(2000)
 
             # Register event handlers
             self._register_events()
@@ -308,6 +323,19 @@ class HudOverlay:
         """Update the clock display."""
         if self._label_time:
             self._label_time.setText(time.strftime("%H:%M"))
+
+    def _update_system_stats(self) -> None:
+        """Update CPU and RAM usage on the HUD."""
+        try:
+            import psutil
+            cpu = psutil.cpu_percent(interval=None)
+            ram = psutil.virtual_memory().percent
+            if self._label_cpu:
+                self._label_cpu.setText(f"CPU: {cpu:.0f}%")
+            if self._label_ram:
+                self._label_ram.setText(f"RAM: {ram:.0f}%")
+        except Exception:
+            pass
 
     def toggle_visibility(self) -> None:
         """Toggle HUD visibility."""

@@ -3,15 +3,17 @@ Penélope — Command Executor
 Bridges parsed intents to real system actions with permission checks.
 """
 
+import asyncio
 import time
-from typing import Any, Dict, Optional
+from typing import Any, Callable, Dict, Optional
 
 from penelope.ai.intent_parser import ParsedIntent
 from penelope.ai.llm_client import LLMClient
+from penelope.ai.memory import MemoryManager
 from penelope.auth.session import Session
 from penelope.core.event_bus import get_event_bus
 from penelope.system.windows_control import WindowsControl
-from penelope.utils.constants import EventType, IntentCategory, SystemMode
+from penelope.utils.constants import EventType, IntentCategory, SystemMode, UserLevel
 from penelope.utils.logger import get_logger
 
 log = get_logger(__name__)
@@ -77,10 +79,12 @@ class CommandExecutor:
         audio_manager: Optional[Any] = None,
         window_manager: Optional[Any] = None,
         clipboard_manager: Optional[Any] = None,
+        memory_manager: Optional[MemoryManager] = None,
     ) -> None:
         self.windows = windows_control or WindowsControl()
         self.llm = llm_client
         self.audio = audio_manager
+        self.memory = memory_manager
         
         # Instantiate window and clipboard managers natively
         from penelope.system.window_manager import WindowManager
@@ -93,6 +97,13 @@ class CommandExecutor:
         
         self.bus = get_event_bus()
         self._current_mode = SystemMode.NORMAL
+
+        # Callback for requesting text input from the user (set by main.py)
+        self._input_callback: Optional[Callable] = None
+
+    def set_input_callback(self, callback: Callable) -> None:
+        """Set the callback used to request text/voice input from the user."""
+        self._input_callback = callback
 
     async def execute(
         self,
@@ -386,6 +397,19 @@ class CommandExecutor:
         log.info(f"Mode changed: {old_mode.value} → {new_mode.value}")
         return f"Modo {name} ativado."
 
+    async def _request_input(self, prompt: str) -> str:
+        """Request text/voice input from the user via the main loop."""
+        if self._input_callback:
+            return await self._input_callback(prompt=prompt)
+        # Fallback: read from stdin directly
+        print(f"  [Penélope — {prompt}]: ", end="", flush=True)
+        loop = asyncio.get_running_loop()
+        try:
+            text = await loop.run_in_executor(None, lambda: input().strip())
+            return text
+        except Exception:
+            return ""
+
     async def _handle_user_management(self, intent: ParsedIntent) -> str:
         """Handle user management commands (owner only)."""
         action = intent.action
@@ -394,40 +418,165 @@ class CommandExecutor:
             try:
                 from penelope.auth.profiles import ProfileManager
                 pm = ProfileManager()
-                profiles = pm.get_all_profiles()
+                profiles = pm.get_all_profiles(include_inactive=True)
                 if not profiles:
                     return "Nenhum usuário cadastrado."
-                names = [
-                    f"{p.name} ({p.level.name})" for p in profiles
-                ]
-                return f"Usuários: {', '.join(names)}."
+                parts = []
+                for p in profiles:
+                    status = "ativo" if p.active else "inativo"
+                    parts.append(f"{p.name} ({p.level.name}, {status})")
+                return f"Usuários cadastrados: {', '.join(parts)}."
             except Exception as e:
                 log.error(f"Failed to list users: {e}")
                 return "Erro ao listar usuários."
 
         if action == "check_permissions":
-            user_name = intent.entities.get("user_name", "")
+            user_name = intent.entities.get("user_name", "").strip()
             try:
                 from penelope.auth.profiles import ProfileManager
                 pm = ProfileManager()
                 profile = pm.get_profile_by_name(user_name)
                 if profile is None:
                     return f"Usuário '{user_name}' não encontrado."
-                perms = ", ".join(sorted(profile.permissions)[:5])
+                perms = ", ".join(sorted(profile.permissions)[:8])
                 total = len(profile.permissions)
                 return (
-                    f"{profile.name} tem {total} permissões. "
+                    f"{profile.name} ({profile.level.name}) tem {total} permissões. "
                     f"Incluindo: {perms}."
                 )
             except Exception as e:
                 log.error(f"Failed to check permissions: {e}")
                 return "Erro ao verificar permissões."
 
-        # Placeholder for interactive user management
-        return (
-            "Gerenciamento interativo de usuários ainda em desenvolvimento. "
-            "Use o setup wizard para adicionar o proprietário."
+        if action == "add_co_owner":
+            return await self._interactive_add_user(UserLevel.CO_OWNER)
+
+        if action == "add_common_user":
+            return await self._interactive_add_user(UserLevel.COMMON)
+
+        if action == "deactivate_user":
+            user_name = intent.entities.get("user_name", "").strip()
+            return await self._interactive_deactivate_user(user_name)
+
+        return "Comando de gerenciamento de usuários não reconhecido."
+
+    async def _interactive_add_user(self, level: UserLevel) -> str:
+        """
+        Interactive flow to add a new user via voice/text.
+
+        Steps:
+        1. Ask for the user's name
+        2. Ask for the passphrase
+        3. Create the profile
+        """
+        level_name = {
+            UserLevel.CO_OWNER: "coproprietário",
+            UserLevel.COMMON: "usuário comum",
+        }.get(level, "usuário")
+
+        # Step 1: Get name
+        name = await self._request_input(f"Qual o nome do novo {level_name}?")
+        if not name:
+            return "Operação cancelada. Nenhum nome informado."
+
+        # Step 2: Get passphrase
+        passphrase = await self._request_input(
+            f"Qual será a frase-chave de acesso para {name}?"
         )
+        if not passphrase:
+            return "Operação cancelada. Nenhuma frase-chave informada."
+
+        # Step 3: Create profile
+        try:
+            from penelope.auth.profiles import ProfileManager
+            from penelope.auth.permissions import get_default_permissions
+
+            pm = ProfileManager()
+
+            # Check if already exists
+            existing = pm.get_profile_by_name(name)
+            if existing:
+                return f"Já existe um usuário com o nome '{name}'."
+
+            # Determine timeout and hours
+            timeout = 60 if level == UserLevel.CO_OWNER else 30
+            hours_start = None if level == UserLevel.CO_OWNER else "08:00"
+            hours_end = None if level == UserLevel.CO_OWNER else "20:00"
+
+            profile = pm.create_profile(
+                name=name,
+                passphrase=passphrase,
+                level=level,
+                session_timeout_minutes=timeout,
+                allowed_hours_start=hours_start,
+                allowed_hours_end=hours_end,
+            )
+
+            log.info(f"User created via voice: {profile.name} (Level {level.name})")
+
+            # Remember in long-term memory
+            if self.memory:
+                self.memory.remember(
+                    key=f"user_created_{name.lower()}",
+                    value=f"{name} criado como {level_name}",
+                    category="user_management",
+                )
+
+            return (
+                f"Pronto! {name} foi adicionado como {level_name}. "
+                f"A frase-chave está configurada."
+            )
+
+        except ValueError as e:
+            return f"Não foi possível criar o usuário: {e}"
+        except Exception as e:
+            log.error(f"Failed to create user: {e}", exc_info=True)
+            return "Ocorreu um erro ao criar o usuário. Verifique os logs."
+
+    async def _interactive_deactivate_user(self, user_name: str) -> str:
+        """
+        Deactivate a user profile with confirmation.
+        """
+        if not user_name:
+            user_name = await self._request_input(
+                "Qual o nome do usuário que deseja desativar?"
+            )
+            if not user_name:
+                return "Operação cancelada."
+
+        try:
+            from penelope.auth.profiles import ProfileManager
+            pm = ProfileManager()
+
+            profile = pm.get_profile_by_name(user_name)
+            if profile is None:
+                return f"Usuário '{user_name}' não encontrado."
+
+            if profile.level == UserLevel.OWNER:
+                return "Não é possível desativar o proprietário do sistema."
+
+            # Confirm
+            confirm = await self._request_input(
+                f"Tem certeza que deseja desativar o acesso de {profile.name}? (sim/não)"
+            )
+            if confirm.lower() not in ("sim", "s", "yes", "y", "confirmo"):
+                return "Operação cancelada."
+
+            pm.deactivate_profile(profile.id)
+            log.info(f"User deactivated via voice: {profile.name}")
+
+            if self.memory:
+                self.memory.remember(
+                    key=f"user_deactivated_{user_name.lower()}",
+                    value=f"{profile.name} desativado",
+                    category="user_management",
+                )
+
+            return f"Acesso de {profile.name} foi desativado."
+
+        except Exception as e:
+            log.error(f"Failed to deactivate user: {e}")
+            return "Erro ao desativar o usuário."
 
     @property
     def current_mode(self) -> SystemMode:

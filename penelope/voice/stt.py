@@ -1,9 +1,11 @@
 """
 Penélope — Speech-to-Text
-Transcription using faster-whisper (CTranslate2 backend).
+Transcription using faster-whisper (CTranslate2 backend) with Vosk fallback.
 """
 
+import json
 import time
+from pathlib import Path
 from typing import Optional, Tuple
 
 try:
@@ -43,6 +45,8 @@ class SpeechToText:
         self.silence_threshold = silence_threshold
         self.silence_duration_ms = silence_duration_ms
         self._model = None
+        self._vosk_model = None
+        self._vosk_active = False
         self._loaded = False
 
     def load_model(self) -> bool:
@@ -87,10 +91,56 @@ class SpeechToText:
             return True
 
         except ImportError:
-            log.error("faster-whisper not installed: pip install faster-whisper")
-            return False
+            log.warning("faster-whisper não instalado — tentando fallback Vosk...")
+            return self._load_vosk()
         except Exception as e:
             log.error(f"Failed to load Whisper model: {e}")
+            log.info("Tentando fallback para Vosk...")
+            return self._load_vosk()
+
+    def _load_vosk(self) -> bool:
+        """
+        Load Vosk as a fallback STT engine.
+
+        Vosk is lighter and works on CPU without CUDA,
+        but has lower accuracy compared to Whisper.
+
+        Returns:
+            True if Vosk loaded successfully.
+        """
+        try:
+            from vosk import Model as VoskModel, KaldiRecognizer
+
+            # Try to find a Portuguese model
+            vosk_model_path = None
+            possible_paths = [
+                Path("C:/Penelope/models/vosk-model-pt"),
+                Path("C:/Penelope/models/vosk-model-small-pt"),
+                Path.home() / ".cache" / "vosk" / "vosk-model-pt",
+                Path.home() / ".cache" / "vosk" / "vosk-model-small-pt-0.3",
+            ]
+
+            for p in possible_paths:
+                if p.exists():
+                    vosk_model_path = str(p)
+                    break
+
+            if vosk_model_path:
+                self._vosk_model = VoskModel(vosk_model_path)
+            else:
+                # Vosk auto-downloads a small model if none specified
+                self._vosk_model = VoskModel(lang="pt")
+
+            self._vosk_active = True
+            self._loaded = True
+            log.info("Vosk STT carregado como fallback (menor acurácia)")
+            return True
+
+        except ImportError:
+            log.error("Vosk não instalado: pip install vosk")
+            return False
+        except Exception as e:
+            log.error(f"Falha ao carregar Vosk: {e}")
             return False
 
     def transcribe(
@@ -108,7 +158,14 @@ class SpeechToText:
         Returns:
             Tuple of (transcribed_text, confidence_score).
         """
-        if not self._loaded or self._model is None:
+        if not self._loaded:
+            log.error("Nenhum modelo STT carregado")
+            return "", 0.0
+
+        if self._vosk_active:
+            return self._transcribe_vosk(audio, sample_rate)
+
+        if self._model is None:
             log.error("Whisper model not loaded")
             return "", 0.0
 
@@ -189,12 +246,69 @@ class SpeechToText:
 
         return False
 
+    def _transcribe_vosk(self, audio: np.ndarray, sample_rate: int = 16000) -> Tuple[str, float]:
+        """
+        Transcribe audio using Vosk fallback.
+
+        Args:
+            audio: NumPy array of float32 audio samples.
+            sample_rate: Audio sample rate.
+
+        Returns:
+            Tuple of (transcribed_text, confidence_score).
+        """
+        try:
+            from vosk import KaldiRecognizer
+
+            start_time = time.time()
+
+            rec = KaldiRecognizer(self._vosk_model, sample_rate)
+            rec.SetWords(True)
+
+            # Convert to int16 bytes for Vosk
+            audio_int16 = (audio * 32767).astype(np.int16)
+            audio_bytes = audio_int16.tobytes()
+
+            # Process in chunks
+            chunk_size = 4000
+            for i in range(0, len(audio_bytes), chunk_size):
+                rec.AcceptWaveform(audio_bytes[i:i + chunk_size])
+
+            result = json.loads(rec.FinalResult())
+            text = result.get("text", "").strip()
+
+            # Vosk doesn't provide confidence per se, estimate from word count
+            confidence = 0.6 if text else 0.0  # Lower confidence than Whisper
+
+            elapsed = time.time() - start_time
+            log.info(
+                f"Vosk transcribed ({elapsed:.1f}s): '{text[:80]}' "
+                f"confidence={confidence:.2f}"
+            )
+
+            return text, confidence
+
+        except Exception as e:
+            log.error(f"Vosk transcription failed: {e}")
+            return "", 0.0
+
     @property
     def is_loaded(self) -> bool:
         return self._loaded
 
+    @property
+    def engine_name(self) -> str:
+        """Get the name of the active STT engine."""
+        if self._vosk_active:
+            return "Vosk"
+        elif self._model is not None:
+            return f"Whisper ({self.model_size})"
+        return "None"
+
     def unload(self) -> None:
         """Unload the model to free memory (for Game Mode)."""
         self._model = None
+        self._vosk_model = None
+        self._vosk_active = False
         self._loaded = False
-        log.info("Whisper model unloaded")
+        log.info("STT model unloaded")

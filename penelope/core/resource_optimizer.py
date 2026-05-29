@@ -7,6 +7,7 @@ import os
 import platform
 import threading
 import time
+from datetime import datetime
 from typing import List, Optional
 
 import psutil
@@ -29,10 +30,12 @@ class ResourceOptimizer:
         self.bus = get_event_bus()
         self._running = False
         self._thread: Optional[threading.Thread] = None
+        self._time_thread: Optional[threading.Thread] = None
         self._known_games: List[str] = [
             "gta5.exe", "valorant.exe", "cs2.exe", "rocketleague.exe", "fortnitelauncher.exe"
         ]
         self._detection_interval = 10.0
+        self._manual_mode_override = False  # True when user explicitly set a mode
         self._load_config()
 
     def _load_config(self) -> None:
@@ -76,6 +79,15 @@ class ResourceOptimizer:
             daemon=True
         )
         self._thread.start()
+
+        # Start time-based mode switching thread
+        self._time_thread = threading.Thread(
+            target=self._time_mode_loop,
+            name="time_mode_check",
+            daemon=True
+        )
+        self._time_thread.start()
+
         log.info("Otimizador de Recursos iniciado.")
 
     def stop(self) -> None:
@@ -85,11 +97,24 @@ class ResourceOptimizer:
         if self._thread:
             self._thread.join(timeout=2.0)
             self._thread = None
+        if self._time_thread:
+            self._time_thread.join(timeout=2.0)
+            self._time_thread = None
         log.info("Otimizador de Recursos parado.")
 
-    def _on_mode_changed(self, old_mode: str = "", new_mode: str = "", **kwargs) -> None:
+    def _on_mode_changed(self, old_mode: str = "", new_mode: str = "", source: str = "", **kwargs) -> None:
         """React to operating mode changes by adjusting resource allocations."""
-        log.info(f"Otimizador: Modo alterado de '{old_mode}' para '{new_mode}'")
+        log.info(f"Otimizador: Modo alterado de '{old_mode}' para '{new_mode}' (source={source})")
+
+        # Track if this was a manual/voice change (not from auto-detection)
+        if source in ("user", "voice", "radial", ""):
+            # Game mode and auto-time are automatic, everything else is manual
+            if new_mode not in (SystemMode.GAME.value, SystemMode.MORNING.value, SystemMode.NIGHT.value):
+                self._manual_mode_override = True
+            elif source in ("user", "voice", "radial"):
+                self._manual_mode_override = True
+            else:
+                self._manual_mode_override = False
         
         # 1. Update wake word check interval
         # Mappings of check interval (ms) per mode
@@ -216,3 +241,66 @@ class ResourceOptimizer:
                 log.error(f"Erro no loop de detecção de jogos: {e}")
 
             time.sleep(self._detection_interval)
+
+    def _time_mode_loop(self) -> None:
+        """
+        Periodically check the time to switch between Morning and Night modes.
+
+        Morning: 06:00–10:00
+        Night: 22:00–06:00
+        """
+        _last_auto_mode: Optional[str] = None
+
+        while self._running:
+            try:
+                # Don't override if the user manually chose a mode
+                if self._manual_mode_override:
+                    time.sleep(60)
+                    continue
+
+                executor = self.main_module._command_executor
+                if not executor:
+                    time.sleep(60)
+                    continue
+
+                current_mode = executor.current_mode
+                # Don't override game mode (it's managed by game detection)
+                if current_mode == SystemMode.GAME:
+                    time.sleep(60)
+                    continue
+
+                now = datetime.now()
+                hour = now.hour
+
+                target_mode: Optional[SystemMode] = None
+
+                if 6 <= hour < 10:
+                    target_mode = SystemMode.MORNING
+                elif hour >= 22 or hour < 6:
+                    target_mode = SystemMode.NIGHT
+                else:
+                    # Daytime: return to normal if we were in an auto mode
+                    if current_mode in (SystemMode.MORNING, SystemMode.NIGHT):
+                        target_mode = SystemMode.NORMAL
+
+                if target_mode and current_mode != target_mode:
+                    auto_mode_str = target_mode.value
+                    if _last_auto_mode != auto_mode_str:
+                        log.info(
+                            f"Troca automática de modo por horário: "
+                            f"{current_mode.value} → {target_mode.value} ({hour:02d}:{now.minute:02d})"
+                        )
+                        old = executor._current_mode
+                        executor._current_mode = target_mode
+                        self.bus.emit_sync(
+                            EventType.MODE_CHANGED,
+                            old_mode=old.value,
+                            new_mode=target_mode.value,
+                            source="auto_time",
+                        )
+                        _last_auto_mode = auto_mode_str
+
+            except Exception as e:
+                log.error(f"Erro no loop de verificação de horário: {e}")
+
+            time.sleep(60)

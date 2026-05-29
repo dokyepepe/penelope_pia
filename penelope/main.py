@@ -45,6 +45,7 @@ _command_executor = None
 _watchdog = None
 _health_monitor = None
 _windows_control = None
+_memory_manager = None
 _shutdown_event = threading.Event()
 
 # UI references
@@ -129,6 +130,12 @@ def _init_all() -> None:
     global _llm_client, _audio_manager, _wake_word, _stt, _tts
     global _authenticator, _session_manager, _intent_parser
     global _command_executor, _watchdog, _health_monitor, _windows_control
+    global _memory_manager
+
+    # ── Memory Manager ──
+    log.info("Inicializando gerenciador de memória...")
+    from penelope.ai.memory import MemoryManager
+    _memory_manager = MemoryManager()
 
     # ── LLM Client ──
     log.info("Inicializando LLM Client...")
@@ -142,8 +149,25 @@ def _init_all() -> None:
     from penelope.voice.audio_manager import AudioManager
     _audio_manager = AudioManager(sample_rate=16000, channels=1, chunk_size=1024)
 
+    # Load voice settings
+    stt_model = "tiny"
+    stt_language = "pt"
+    stt_device = "auto"
+    try:
+        from penelope.utils.constants import SETTINGS_FILE
+        import yaml
+        if SETTINGS_FILE.exists():
+            with open(SETTINGS_FILE, "r", encoding="utf-8") as f:
+                settings = yaml.safe_load(f)
+                voice_cfg = settings.get("voice", {})
+                stt_model = voice_cfg.get("stt_model", "tiny")
+                stt_language = voice_cfg.get("stt_language", "pt")
+                stt_device = voice_cfg.get("stt_device", "auto")
+    except Exception as e:
+        log.warning(f"Falha ao carregar stt_model de settings.yaml: {e}")
+
     from penelope.voice.stt import SpeechToText
-    _stt = SpeechToText(model_size="medium", language="pt", device="auto")
+    _stt = SpeechToText(model_size=stt_model, language=stt_language, device=stt_device)
     if not _stt.load_model():
         log.warning("Whisper STT não carregado — transcrição desabilitada")
 
@@ -176,7 +200,11 @@ def _init_all() -> None:
         windows_control=_windows_control,
         llm_client=_llm_client,
         audio_manager=_audio_manager,
+        memory_manager=_memory_manager,
     )
+
+    # Wire up input callback for interactive flows (user management)
+    _command_executor.set_input_callback(_listen_and_transcribe)
 
     # ── Persistence ──
     log.info("Inicializando watchdog e monitor de saúde...")
@@ -420,6 +448,10 @@ async def _main_loop() -> None:
 
             log.info(f"📝 Transcrito: '{transcription}'")
 
+            # ── Track in memory ──
+            if _memory_manager:
+                _memory_manager.add_message("user", transcription)
+
             # ── 4. Parse intent ──
             intent = _intent_parser.parse(transcription)
             log.info(
@@ -438,6 +470,10 @@ async def _main_loop() -> None:
             # ── 5. Execute ──
             response = await _command_executor.execute(intent, session)
             log.info(f"💬 Resposta: '{response[:80]}...'")
+
+            # ── Track response in memory ──
+            if _memory_manager:
+                _memory_manager.add_message("assistant", response)
 
             # ── 6. Speak ──
             if _tts and _tts.is_available:
@@ -562,6 +598,23 @@ def _signal_handler(signum, frame) -> None:
 def _shutdown() -> None:
     """Shut down all modules gracefully."""
     log.info("Encerrando Penélope...")
+
+    # Save current session to memory before shutdown
+    if _memory_manager and _session_manager and _session_manager.current:
+        try:
+            session = _session_manager.current
+            conversation = _memory_manager.get_conversation()
+            if conversation:
+                _memory_manager.save_session(
+                    profile_id=session.profile.id,
+                    profile_name=session.user_name,
+                    messages=conversation,
+                    summary=f"Sessão encerrada por shutdown ({len(conversation)} mensagens)",
+                )
+                log.info(f"Sessão salva para {session.user_name} ({len(conversation)} msgs)")
+            _memory_manager.clear_conversation()
+        except Exception as e:
+            log.warning(f"Falha ao salvar sessão no shutdown: {e}")
 
     # Clean up UI components and optimizer
     global _hud, _tray, _radial_menu, _resource_optimizer

@@ -35,7 +35,7 @@ voice:
   wake_word: "penelope"
   wake_word_threshold: 0.7
   wake_word_model_path: null  # null = use default
-  stt_model: "medium"         # tiny, base, small, medium, large
+  stt_model: "tiny"         # tiny, base, small, medium, large
   stt_language: "pt"
   stt_device: "auto"          # auto, cpu, cuda
   tts_model: "pt_BR-faber-medium"
