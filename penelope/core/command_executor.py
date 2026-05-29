@@ -56,10 +56,17 @@ ACTION_PERMISSIONS: Dict[str, str] = {
     "list_users": "manage_users",
     "deactivate_user": "manage_users",
     "check_permissions": "manage_users",
-    # AI / Automation
     "chat": "conversation",
     "sleep_routine": "automation",
     "meeting_routine": "automation",
+    "open_settings": "change_settings",
+    "spotify_playpause": "open_app",
+    "spotify_next": "open_app",
+    "spotify_prev": "open_app",
+    "whatsapp_send": "open_app",
+    "browser_search": "open_app",
+    "browser_new_tab": "open_app",
+    "browser_close_tab": "open_app",
 }
 
 
@@ -319,6 +326,45 @@ class CommandExecutor:
             except Exception as e:
                 log.error(f"Failed to get clipboard history: {e}")
                 return "Não consegui ler o histórico da área de transferência."
+
+        if action == "open_settings":
+            await self.bus.emit(EventType.HUD_UPDATE, action="open_settings")
+            return "Abrindo painel de configurações."
+
+        # ── Spotify Controls ──
+        if action == "spotify_playpause":
+            result = self.windows.media_play_pause()
+            return result.get("message", "Mídia controlada.")
+
+        if action == "spotify_next":
+            result = self.windows.media_next()
+            return result.get("message", "Passei a música.")
+
+        if action == "spotify_prev":
+            result = self.windows.media_prev()
+            return result.get("message", "Voltei a música.")
+
+        # ── Browser Controls ──
+        if action == "browser_search":
+            query = entities.get("search_query", "")
+            result = self.windows.browser_search(query)
+            return result.get("message", "Pesquisando.")
+
+        if action == "browser_new_tab":
+            result = self.windows.browser_new_tab()
+            return result.get("message", "Nova aba.")
+
+        if action == "browser_close_tab":
+            result = self.windows.browser_close_tab()
+            return result.get("message", "Aba fechada.")
+
+        # ── WhatsApp Controls ──
+        if action == "whatsapp_send":
+            contact = entities.get("contact_name", "")
+            msg_text = entities.get("message_text", "")
+            loop = asyncio.get_running_loop()
+            result = await loop.run_in_executor(None, self.windows.whatsapp_send, contact, msg_text)
+            return result.get("message", "Mensagem enviada.")
 
         # ── Mode Changes ──
         if action.startswith("mode_"):

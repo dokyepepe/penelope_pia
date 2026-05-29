@@ -53,6 +53,7 @@ _app = None
 _hud = None
 _tray = None
 _radial_menu = None
+_settings_panel = None
 _asyncio_loop = None
 _asyncio_thread = None
 _resource_optimizer = None
@@ -267,6 +268,12 @@ def _init_ui() -> None:
     _radial_menu = RadialMenu()
     _radial_menu.initialize()
 
+    # 4. Settings Panel
+    from penelope.ui.settings_panel import SettingsPanel
+    global _settings_panel
+    _settings_panel = SettingsPanel()
+    _settings_panel.initialize()
+
     # Connect radial menu triggers
     def handle_radial_action(slice_data: dict) -> None:
         action = slice_data.get("action")
@@ -318,6 +325,9 @@ def _on_hud_update(action: str = "", **kwargs) -> None:
     if action == "toggle_hud":
         if _hud:
             _hud.toggle_visibility()
+    elif action == "open_settings":
+        if _settings_panel:
+            _settings_panel.show_panel()
     elif action == "show_status":
         if _hud:
             _hud.show()
@@ -652,6 +662,12 @@ def _shutdown() -> None:
     if _radial_menu:
         try:
             _radial_menu.cleanup()
+        except Exception:
+            pass
+    if _settings_panel:
+        try:
+            _settings_panel.close()
+            _settings_panel = None
         except Exception:
             pass
 

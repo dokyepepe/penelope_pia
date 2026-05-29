@@ -49,6 +49,19 @@ COMMAND_PATTERNS: List[Tuple[str, IntentCategory, str, List[str]]] = [
 
     # App control
     (r"(?:abre|abrir)\s+(?:o\s+)?task\s*manager", IntentCategory.SYSTEM_COMMAND, "open_task_manager", []),
+    
+    # Spotify controls
+    (r"(?:pausa|pausar|reproduzir|dar\s+play|retomar)\s+(?:a\s+)?m[uú]sica", IntentCategory.APP_CONTROL, "spotify_playpause", []),
+    (r"(?:pr[oó]xima|pular|passar)\s+(?:a\s+)?m[uú]sica", IntentCategory.APP_CONTROL, "spotify_next", []),
+    (r"(?:m[uú]sica\s+)?(?:anterior|voltar\s+a\s+m[uú]sica)", IntentCategory.APP_CONTROL, "spotify_prev", []),
+    
+    # WhatsApp controls
+    (r"(?:envia|enviar|manda|mandar)\s+(?:uma\s+)?(?:mensagem|whatsapp)\s+para\s+([a-zA-Z0-9_áéíóúâêôãõç\s]+?)(?:\s+dizendo\s+|\s+falando\s+|\s*:\s*)(.+)", IntentCategory.APP_CONTROL, "whatsapp_send", ["contact_name", "message_text"]),
+    
+    # Browser controls
+    (r"(?:pesquisa|pesquisar|busca|buscar)\s+(?:no\s+)?(?:google|chrome|navegador)\s+(?:por\s+)?(.+)", IntentCategory.APP_CONTROL, "browser_search", ["search_query"]),
+    (r"(?:fecha|fechar)\s+(?:a\s+)?aba(?:\s+do\s+navegador)?", IntentCategory.APP_CONTROL, "browser_close_tab", []),
+    (r"(?:abre|abrir|nova)\s+(?:aba|guia)(?:\s+no\s+navegador)?", IntentCategory.APP_CONTROL, "browser_new_tab", []),
 
     # Mode changes
     (r"(?:modo|entra|ativa)\s+(?:no\s+)?(?:modo\s+)?trabalho", IntentCategory.MODE_CHANGE, "mode_work", []),

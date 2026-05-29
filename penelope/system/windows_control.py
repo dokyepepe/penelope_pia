@@ -285,6 +285,112 @@ class WindowsControl:
         except Exception as e:
             return {"success": False, "message": str(e)}
 
+    def media_play_pause(self) -> Dict:
+        """Play or pause active media (e.g. Spotify)."""
+        try:
+            import ctypes
+            # VK_MEDIA_PLAY_PAUSE = 0xB3
+            ctypes.windll.user32.keybd_event(0xB3, 0, 0, 0)
+            ctypes.windll.user32.keybd_event(0xB3, 0, 2, 0)
+            return {"success": True, "message": "Mídia pausada ou retomada."}
+        except Exception as e:
+            log.error(f"Media play/pause failed: {e}")
+            return {"success": False, "message": "Falha ao controlar mídia."}
+
+    def media_next(self) -> Dict:
+        """Skip to next media track."""
+        try:
+            import ctypes
+            # VK_MEDIA_NEXT_TRACK = 0xB0
+            ctypes.windll.user32.keybd_event(0xB0, 0, 0, 0)
+            ctypes.windll.user32.keybd_event(0xB0, 0, 2, 0)
+            return {"success": True, "message": "Pulei para a próxima faixa."}
+        except Exception as e:
+            log.error(f"Media next failed: {e}")
+            return {"success": False, "message": "Falha ao passar música."}
+
+    def media_prev(self) -> Dict:
+        """Go back to previous media track."""
+        try:
+            import ctypes
+            # VK_MEDIA_PREV_TRACK = 0xB1
+            ctypes.windll.user32.keybd_event(0xB1, 0, 0, 0)
+            ctypes.windll.user32.keybd_event(0xB1, 0, 2, 0)
+            return {"success": True, "message": "Voltando para a música anterior."}
+        except Exception as e:
+            log.error(f"Media prev failed: {e}")
+            return {"success": False, "message": "Falha ao voltar música."}
+
+    def browser_search(self, query: str) -> Dict:
+        """Search query in Google Chrome."""
+        try:
+            import urllib.parse
+            encoded_query = urllib.parse.quote(query)
+            url = f"https://www.google.com/search?q={encoded_query}"
+            os.startfile(url)
+            return {"success": True, "message": f"Pesquisando por {query} no navegador."}
+        except Exception as e:
+            log.error(f"Browser search failed: {e}")
+            return {"success": False, "message": "Falha ao abrir pesquisa."}
+
+    def browser_new_tab(self) -> Dict:
+        """Open a new tab in active browser."""
+        try:
+            if pyautogui:
+                pyautogui.hotkey("ctrl", "t")
+                return {"success": True, "message": "Nova aba aberta."}
+            return {"success": False, "message": "Automatizador de interface não disponível."}
+        except Exception as e:
+            log.error(f"Browser new tab failed: {e}")
+            return {"success": False, "message": "Falha ao abrir aba."}
+
+    def browser_close_tab(self) -> Dict:
+        """Close active tab in active browser."""
+        try:
+            if pyautogui:
+                pyautogui.hotkey("ctrl", "w")
+                return {"success": True, "message": "Aba fechada."}
+            return {"success": False, "message": "Automatizador de interface não disponível."}
+        except Exception as e:
+            log.error(f"Browser close tab failed: {e}")
+            return {"success": False, "message": "Falha ao fechar aba."}
+
+    def whatsapp_send(self, contact: str, message: str) -> Dict:
+        """Send a WhatsApp message via GUI automation."""
+        try:
+            if not pyautogui:
+                return {"success": False, "message": "Biblioteca PyAutoGUI não disponível."}
+
+            log.info(f"Opening WhatsApp for contact: {contact}")
+            try:
+                os.startfile("whatsapp://")
+            except Exception:
+                exe = self._app_registry.get("whatsapp", "whatsapp")
+                subprocess.Popen(exe, shell=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+            
+            time.sleep(3.0)
+
+            pyautogui.hotkey("ctrl", "f")
+            time.sleep(0.5)
+
+            pyautogui.write(contact, interval=0.05)
+            time.sleep(1.0)
+
+            pyautogui.press("enter")
+            time.sleep(0.8)
+
+            pyautogui.write(message, interval=0.03)
+            time.sleep(0.5)
+
+            pyautogui.press("enter")
+
+            log.info(f"WhatsApp message sent to {contact}")
+            return {"success": True, "message": f"Mensagem enviada para {contact}."}
+
+        except Exception as e:
+            log.error(f"WhatsApp automation failed: {e}")
+            return {"success": False, "message": "Falha ao enviar mensagem pelo WhatsApp."}
+
     def register_app(self, name: str, command: str) -> None:
         """Register a custom app name to command mapping."""
         self._app_registry[name.lower()] = command
