@@ -1,6 +1,6 @@
 """
 Penélope — Radial Menu (Pizza Menu)
-Circular action menu that appears centered on the cursor.
+Circular action menu that appears centered on the cursor with glowing holographic design.
 """
 
 import math
@@ -11,7 +11,6 @@ from penelope.utils.constants import EventType, UserLevel
 from penelope.utils.logger import get_logger
 
 log = get_logger(__name__)
-
 
 # Default menu slices per profile level
 DEFAULT_SLICES: Dict[str, List[Dict]] = {
@@ -47,10 +46,7 @@ DEFAULT_SLICES: Dict[str, List[Dict]] = {
 class RadialMenu:
     """
     Circular (pizza) action menu triggered by a hotkey.
-
     Appears centered on the cursor with animated opening.
-    Slices are filtered based on the active user profile.
-    Supports sub-menus for nested actions.
     """
 
     def __init__(
@@ -68,19 +64,14 @@ class RadialMenu:
         self.bus = get_event_bus()
 
     def initialize(self) -> bool:
-        """
-        Initialize the radial menu.
-
-        Returns:
-            True if initialized successfully.
-        """
+        """Initialize the radial menu and configure input tracking."""
         try:
-            from PyQt6.QtWidgets import QWidget, QApplication
-            from PyQt6.QtCore import Qt
-            from PyQt6.QtGui import QPainter, QColor, QFont, QPen, QPainterPath
+            from PyQt6.QtWidgets import QWidget
+            from PyQt6.QtCore import Qt, pyqtSlot
+            from PyQt6.QtGui import QPainter, QColor, QFont, QPen, QRadialGradient
 
             class RadialWidget(QWidget):
-                """Custom widget for the radial menu."""
+                """Custom widget for the radial menu with tracking and custom painting."""
 
                 def __init__(self, menu: 'RadialMenu'):
                     super().__init__()
@@ -92,11 +83,11 @@ class RadialMenu:
                         | Qt.WindowType.Popup
                     )
                     self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground)
+                    self.setMouseTracking(True)
                     size = menu.radius * 2 + 60
                     self.setFixedSize(size, size)
                     self._hovered_slice = -1
 
-                from PyQt6.QtCore import pyqtSlot
                 @pyqtSlot()
                 def show_at_cursor_widget(self):
                     try:
@@ -128,33 +119,65 @@ class RadialMenu:
                     n = len(slices)
                     angle_per = 360.0 / n
 
-                    # Draw background circle
-                    painter.setBrush(QColor(10, 14, 23, 200))
+                    # 1. Background dark translucent ring
+                    painter.setBrush(QColor(10, 14, 23, 215))
                     painter.setPen(QPen(QColor("#1E3A5F"), 2))
                     painter.drawEllipse(cx - r, cy - r, r * 2, r * 2)
 
-                    # Draw center circle
-                    painter.setBrush(QColor(0, 240, 255, 40))
+                    # 2. Outer glowing cyan ring
+                    glow = QColor("#00F0FF")
+                    glow.setAlpha(80)
+                    painter.setBrush(Qt.BrushStyle.NoBrush)
+                    painter.setPen(QPen(glow, 3))
+                    painter.drawEllipse(cx - r - 2, cy - r - 2, (r + 2) * 2, (r + 2) * 2)
+
+                    # 3. Draw hover highlighted sector
+                    if self._hovered_slice != -1:
+                        # Angle in Qt starts at 3 o'clock (0 degrees) and is counter-clockwise.
+                        # Index 0 starts at -90 degrees (12 o'clock), growing clockwise.
+                        start_angle_qt = int((90 - (self._hovered_slice + 1) * angle_per) * 16)
+                        span_angle_qt = int(angle_per * 16)
+
+                        grad = QRadialGradient(cx, cy, r)
+                        grad.setColorAt(0.0, QColor("#7B2FFF80"))  # Purple central glow
+                        grad.setColorAt(1.0, QColor("#00F0FFCC"))  # Neon cyan outer edge
+
+                        painter.setBrush(grad)
+                        painter.setPen(QPen(QColor("#00F0FF"), 2))
+                        painter.drawPie(cx - r, cy - r, r * 2, r * 2, start_angle_qt, span_angle_qt)
+
+                    # 4. Partition divider dashed lines
+                    painter.setBrush(Qt.BrushStyle.NoBrush)
+                    painter.setPen(QPen(QColor("#1E3A5F"), 1, Qt.PenStyle.DashLine))
+                    for i in range(n):
+                        angle_rad = math.radians(i * angle_per - 90)
+                        x2 = cx + r * math.cos(angle_rad)
+                        y2 = cy + r * math.sin(angle_rad)
+                        painter.drawLine(int(cx), int(cy), int(x2), int(y2))
+
+                    # 5. Glowing Center Core
+                    painter.setBrush(QColor(13, 21, 32, 255))
                     painter.setPen(QPen(QColor("#00F0FF"), 2))
-                    painter.drawEllipse(cx - 30, cy - 30, 60, 60)
+                    painter.drawEllipse(cx - 32, cy - 32, 64, 64)
 
-                    # Draw center text
-                    font = QFont("Segoe UI", 8)
+                    core_pulse = QColor("#00F0FF")
+                    core_pulse.setAlpha(60)
+                    painter.setBrush(core_pulse)
+                    painter.drawEllipse(cx - 24, cy - 24, 48, 48)
+
+                    font = QFont("Rajdhani", 12, QFont.Weight.Bold)
                     painter.setFont(font)
-                    painter.setPen(QColor("#00F0FF"))
-                    painter.drawText(cx - 15, cy + 4, "P")
+                    painter.setPen(QColor("#E8F4F8"))
+                    painter.drawText(cx - 6, cy + 6, "P")
 
-                    # Draw slices
-                    font = QFont("Segoe UI", 9)
-                    painter.setFont(font)
-
+                    # 6. Slices Icons & Labels
                     for i, s in enumerate(slices):
                         angle = math.radians(i * angle_per - 90 + angle_per / 2)
-                        label_r = r * 0.65
+                        label_r = r * 0.70
                         lx = cx + label_r * math.cos(angle)
                         ly = cy + label_r * math.sin(angle)
 
-                        # Slice highlight
+                        # Highlight text when hovered
                         if i == self._hovered_slice:
                             painter.setPen(QColor("#00F0FF"))
                         else:
@@ -166,11 +189,38 @@ class RadialMenu:
                         painter.drawText(int(lx - 12), int(ly - 4), s.get("icon", "●"))
 
                         # Label
-                        label_font = QFont("Segoe UI", 8)
+                        label_font = QFont("Segoe UI", 8, QFont.Weight.Bold)
                         painter.setFont(label_font)
-                        painter.drawText(int(lx - 20), int(ly + 16), s.get("label", ""))
+                        painter.drawText(int(lx - 22), int(ly + 16), s.get("label", ""))
 
                     painter.end()
+
+                def mouseMoveEvent(self, event):
+                    pos = event.position()
+                    cx = self.width() / 2
+                    cy = self.height() / 2
+                    dx = pos.x() - cx
+                    dy = pos.y() - cy
+                    dist = math.sqrt(dx**2 + dy**2)
+
+                    if 32 <= dist <= self.menu.radius:
+                        angle = math.degrees(math.atan2(dy, dx)) + 90
+                        if angle < 0:
+                            angle += 360
+                        
+                        n = len(self.menu._slices)
+                        slice_idx = int(angle / (360.0 / n)) % n
+                        if slice_idx != self._hovered_slice:
+                            self._hovered_slice = slice_idx
+                            self.update()
+                    else:
+                        if self._hovered_slice != -1:
+                            self._hovered_slice = -1
+                            self.update()
+
+                def leaveEvent(self, event):
+                    self._hovered_slice = -1
+                    self.update()
 
                 def mousePressEvent(self, event):
                     pos = event.position()
@@ -180,7 +230,7 @@ class RadialMenu:
                     dy = pos.y() - cy
 
                     dist = math.sqrt(dx ** 2 + dy ** 2)
-                    if dist < 30:  # Center click
+                    if dist < 32:  # Center click
                         self.hide()
                         self.menu._visible = False
                         return
@@ -190,7 +240,7 @@ class RadialMenu:
                         self.menu._visible = False
                         return
 
-                    # Determine which slice
+                    # Determine clicked slice
                     angle = math.degrees(math.atan2(dy, dx)) + 90
                     if angle < 0:
                         angle += 360
@@ -224,9 +274,6 @@ class RadialMenu:
 
             return True
 
-        except ImportError:
-            log.warning("PyQt6 not available — radial menu disabled")
-            return False
         except Exception as e:
             log.error(f"Failed to initialize radial menu: {e}")
             return False

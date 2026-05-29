@@ -60,9 +60,15 @@ _resource_optimizer = None
 
 def main() -> None:
     """Main entry point for the Penélope system."""
-    log.info("═══════════════════════════════════════════")
-    log.info("  PENÉLOPE v0.1.0 — Inicializando...")
-    log.info("═══════════════════════════════════════════")
+    try:
+        from penelope.utils.ascii_art import play_boot_animation
+        play_boot_animation()
+    except Exception as e:
+        log.warning(f"Could not play boot animation: {e}")
+
+    log.info("<magenta>═══════════════════════════════════════════</magenta>")
+    log.info("  <cyan>PENÉLOPE v4.0</cyan> — <green>Inicializando...</green>")
+    log.info("<magenta>═══════════════════════════════════════════</magenta>")
 
     # ── 1. Create data directories ──
     from penelope.core.setup_wizard import ensure_directories
@@ -93,10 +99,10 @@ def main() -> None:
     signal.signal(signal.SIGTERM, _signal_handler)
 
     # ── 7. Run background asyncio loop ──
-    log.info("═══════════════════════════════════════════")
-    log.info("  PENÉLOPE ONLINE — Aguardando wake word...")
-    log.info("  (ou Alt+Space como atalho)")
-    log.info("═══════════════════════════════════════════")
+    log.info("<magenta>═══════════════════════════════════════════</magenta>")
+    log.info("  <cyan>PENÉLOPE ONLINE</cyan> — <green>Aguardando wake word...</green>")
+    log.info("  (ou <bold>Alt+Space</bold> como atalho)")
+    log.info("<magenta>═══════════════════════════════════════════</magenta>")
 
     global _asyncio_loop, _asyncio_thread
     _asyncio_loop = asyncio.new_event_loop()
@@ -153,6 +159,8 @@ def _init_all() -> None:
     stt_model = "tiny"
     stt_language = "pt"
     stt_device = "auto"
+    silence_duration_ms = 1500
+    beam_size = 1
     try:
         from penelope.utils.constants import SETTINGS_FILE
         import yaml
@@ -163,11 +171,19 @@ def _init_all() -> None:
                 stt_model = voice_cfg.get("stt_model", "tiny")
                 stt_language = voice_cfg.get("stt_language", "pt")
                 stt_device = voice_cfg.get("stt_device", "auto")
+                silence_duration_ms = voice_cfg.get("silence_duration_ms", 1500)
+                beam_size = voice_cfg.get("beam_size", 1)
     except Exception as e:
         log.warning(f"Falha ao carregar stt_model de settings.yaml: {e}")
 
     from penelope.voice.stt import SpeechToText
-    _stt = SpeechToText(model_size=stt_model, language=stt_language, device=stt_device)
+    _stt = SpeechToText(
+        model_size=stt_model,
+        language=stt_language,
+        device=stt_device,
+        silence_duration_ms=silence_duration_ms,
+        beam_size=beam_size
+    )
     if not _stt.load_model():
         log.warning("Whisper STT não carregado — transcrição desabilitada")
 

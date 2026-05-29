@@ -37,6 +37,7 @@ class SpeechToText:
         compute_type: str = "float16",
         silence_threshold: float = 0.03,
         silence_duration_ms: int = 1500,
+        beam_size: int = 1,
     ) -> None:
         self.model_size = model_size
         self.language = language
@@ -44,6 +45,7 @@ class SpeechToText:
         self.compute_type = compute_type
         self.silence_threshold = silence_threshold
         self.silence_duration_ms = silence_duration_ms
+        self.beam_size = beam_size
         self._model = None
         self._vosk_model = None
         self._vosk_active = False
@@ -180,7 +182,7 @@ class SpeechToText:
             segments, info = self._model.transcribe(
                 audio,
                 language=self.language,
-                beam_size=5,
+                beam_size=self.beam_size,
                 vad_filter=True,
                 vad_parameters=dict(
                     min_silence_duration_ms=self.silence_duration_ms,

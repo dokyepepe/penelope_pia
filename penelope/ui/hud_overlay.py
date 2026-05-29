@@ -1,10 +1,16 @@
 """
 Penélope — HUD Overlay
-Transparent, always-on-top holographic interface.
+Transparent, always-on-top holographic interface with waveform animation and glitch typewriter.
 """
 
 import time
+import math
+import random
 from typing import Optional
+
+from PyQt6.QtWidgets import QWidget, QVBoxLayout, QHBoxLayout, QLabel, QApplication
+from PyQt6.QtCore import Qt, QTimer, pyqtSlot
+from PyQt6.QtGui import QFont, QPainter, QColor, QPen, QPainterPath
 
 from penelope.core.event_bus import get_event_bus
 from penelope.ui.theme import ThemeConfig, THEMES, get_hud_stylesheet
@@ -14,27 +20,165 @@ from penelope.utils.logger import get_logger
 log = get_logger(__name__)
 
 
+class HudWindow(QWidget):
+    """Custom transparent QWidget that paints cyberpunk HUD elements (grid + corners)."""
+    
+    def __init__(self, theme: ThemeConfig, parent=None):
+        super().__init__(parent)
+        self.theme = theme
+
+    def paintEvent(self, event):
+        painter = QPainter(self)
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+
+        w, h = self.width(), self.height()
+        c = self.theme.colors
+
+        # 1. Subtle high-tech background scanning grid
+        grid_color = QColor(c.primary)
+        grid_color.setAlpha(12)  # Highly transparent
+        painter.setPen(QPen(grid_color, 1))
+        
+        grid_size = 30
+        for x in range(0, w, grid_size):
+            painter.drawLine(x, 0, x, h)
+        for y in range(0, h, grid_size):
+            painter.drawLine(0, y, w, y)
+
+        # 2. Glowing cyberpunk brackets (corners)
+        corner_len = 15
+        pen_width = 3
+        corner_color = QColor(c.primary)
+        painter.setPen(QPen(corner_color, pen_width))
+
+        # Top-Left corner
+        painter.drawLine(0, 0, corner_len, 0)
+        painter.drawLine(0, 0, 0, corner_len)
+
+        # Top-Right corner
+        painter.drawLine(w, 0, w - corner_len, 0)
+        painter.drawLine(w, 0, w, corner_len)
+
+        # Bottom-Left corner
+        painter.drawLine(0, h, corner_len, h)
+        painter.drawLine(0, h, 0, h - corner_len)
+
+        # Bottom-Right corner
+        painter.drawLine(w, h, w - corner_len, h)
+        painter.drawLine(w, h, w, h - corner_len)
+
+        # Decorative inner glowing lines
+        inner_pen = QColor(c.secondary)
+        inner_pen.setAlpha(50)
+        painter.setPen(QPen(inner_pen, 1, Qt.PenStyle.DashLine))
+        painter.drawRect(8, 8, w - 16, h - 16)
+
+        painter.end()
+
+
+class WaveformWidget(QWidget):
+    """Pulsing, state-dependent animated waveform widget."""
+    
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setFixedHeight(30)
+        self.state = HudState.IDLE
+        self.phase = 0.0
+        self.theme = THEMES["holographic"]
+        
+        self.timer = QTimer(self)
+        self.timer.timeout.connect(self.update_animation)
+        self.timer.start(30)  # ~33 FPS
+
+    def set_theme(self, theme: ThemeConfig):
+        self.theme = theme
+        self.update()
+
+    def set_state(self, state: HudState):
+        self.state = state
+        self.update()
+
+    def update_animation(self):
+        # Speed up animation based on current state
+        if self.state == HudState.LISTENING:
+            self.phase += 0.25
+        elif self.state == HudState.PROCESSING:
+            self.phase += 0.15
+        elif self.state == HudState.SPEAKING:
+            self.phase += 0.20
+        else:
+            self.phase += 0.04  # Resting slow pulse
+        self.update()
+
+    def paintEvent(self, event):
+        painter = QPainter(self)
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+
+        w = self.width()
+        h = self.height()
+        cy = h / 2
+        c = self.theme.colors
+
+        # Define color and complexity per state
+        if self.state == HudState.LISTENING:
+            color = QColor(c.accent_green)  # Listening = Green wave
+            amplitude_mult = 1.0
+            num_waves = 3
+        elif self.state == HudState.PROCESSING:
+            color = QColor(c.secondary)     # Processing = Purple wave
+            amplitude_mult = 0.4
+            num_waves = 1
+        elif self.state == HudState.SPEAKING:
+            color = QColor(c.primary)       # Speaking = Cyan wave
+            amplitude_mult = 0.8
+            num_waves = 2
+        elif self.state == HudState.ERROR:
+            color = QColor(c.accent_red)    # Error = Red line
+            amplitude_mult = 0.1
+            num_waves = 1
+        else:
+            # Idle = Subtle cyan resting line
+            color = QColor(c.primary)
+            color.setAlpha(100)
+            amplitude_mult = 0.15
+            num_waves = 1
+
+        for w_idx in range(num_waves):
+            path_color = QColor(color)
+            if num_waves > 1:
+                path_color.setAlpha(int(200 / (w_idx + 1)))
+
+            painter.setPen(QPen(path_color, 2 - w_idx * 0.5))
+            path = QPainterPath()
+            path.moveTo(0, cy)
+
+            frequency = 0.02 + w_idx * 0.01
+            phase_offset = w_idx * 1.5
+
+            for x in range(0, w, 2):
+                # Envelope so waves fade at edges
+                envelope = math.sin(x / w * math.pi)
+                noise = random.uniform(-1.5, 1.5) if self.state == HudState.LISTENING else 0.0
+                
+                y = cy + (h / 2.5) * envelope * amplitude_mult * math.sin(x * frequency - self.phase + phase_offset) + noise
+                path.lineTo(x, y)
+
+            painter.drawPath(path)
+            
+        painter.end()
+
+
 class HudOverlay:
     """
     The main visual interface for Penélope.
-
-    A transparent, borderless, always-on-top PyQt6 window
-    with sci-fi holographic aesthetics.
-
-    Features:
-    - Animated audio waveform during listening
-    - Live transcription display
-    - Typewriter response effect
-    - System status bar (time, uptime, CPU, RAM)
-    - User profile badge
-    - Mode indicator
+    Transparent, borderless, always-on-top PyQt6 window with sci-fi holographic aesthetics.
     """
 
     def __init__(
         self,
         theme_name: str = "holographic",
         width: int = 420,
-        height: int = 280,
+        height: int = 310,  # Adjusted to accommodate waveform comfortably
         position: str = "bottom-right",
     ) -> None:
         self.theme = THEMES.get(theme_name, THEMES["holographic"])
@@ -52,7 +196,12 @@ class HudOverlay:
         self._response_text = ""
         self._transcription_text = ""
 
-        # Qt widgets (set during initialize)
+        # Typewriter variables
+        self._typewriter_target = ""
+        self._typewriter_index = 0
+        self._typewriter_timer = None
+
+        # Qt widgets
         self._label_title = None
         self._label_status = None
         self._label_response = None
@@ -62,25 +211,15 @@ class HudOverlay:
         self._label_time = None
         self._label_cpu = None
         self._label_ram = None
+        self._waveform = None
 
         self.bus = get_event_bus()
 
     def initialize(self) -> bool:
-        """
-        Create and show the HUD overlay window.
-
-        Returns:
-            True if initialized successfully.
-        """
+        """Create and show the HUD overlay window."""
         try:
-            from PyQt6.QtWidgets import (
-                QWidget, QVBoxLayout, QHBoxLayout, QLabel, QApplication,
-            )
-            from PyQt6.QtCore import Qt, QTimer
-            from PyQt6.QtGui import QFont
-
-            # Create main window
-            self._window = QWidget()
+            # Create main custom HudWindow
+            self._window = HudWindow(self.theme)
             self._window.setObjectName("hud_main")
             self._window.setWindowTitle("Penélope HUD")
             self._window.setFixedSize(self.width, self.height)
@@ -98,8 +237,8 @@ class HudOverlay:
 
             # Layout
             layout = QVBoxLayout(self._window)
-            layout.setContentsMargins(16, 12, 16, 12)
-            layout.setSpacing(6)
+            layout.setContentsMargins(18, 16, 18, 16)
+            layout.setSpacing(8)
 
             # Top bar: title + badge + mode
             top_bar = QHBoxLayout()
@@ -119,6 +258,11 @@ class HudOverlay:
             top_bar.addWidget(self._label_mode)
 
             layout.addLayout(top_bar)
+
+            # Waveform Widget
+            self._waveform = WaveformWidget(self._window)
+            self._waveform.set_theme(self.theme)
+            layout.addWidget(self._waveform)
 
             # Transcription line
             self._label_transcription = QLabel("")
@@ -175,17 +319,18 @@ class HudOverlay:
             self._stats_timer.timeout.connect(self._update_system_stats)
             self._stats_timer.start(2000)
 
+            # Timer for typewriter glitch animation
+            self._typewriter_timer = QTimer()
+            self._typewriter_timer.timeout.connect(self._typewriter_tick)
+
             # Register event handlers
             self._register_events()
 
-            log.info("HUD overlay initialized")
+            log.info("HUD overlay initialized with waveform and sci-fi window styling")
             return True
 
-        except ImportError:
-            log.warning("PyQt6 not available — HUD disabled")
-            return False
         except Exception as e:
-            log.error(f"Failed to initialize HUD: {e}")
+            log.error(f"Failed to initialize HUD: {e}", exc_info=True)
             return False
 
     def _position_window(self) -> None:
@@ -194,7 +339,6 @@ class HudOverlay:
             return
 
         try:
-            from PyQt6.QtWidgets import QApplication
             screen = QApplication.primaryScreen()
             if screen is None:
                 return
@@ -244,7 +388,7 @@ class HudOverlay:
         self.set_state(HudState.PROCESSING)
 
     def _on_response_chunk(self, chunk: str = "", **kwargs) -> None:
-        """Handle streaming response chunk."""
+        """Handle streaming response chunk. Keep updating it dynamically."""
         self._response_text += chunk
         if self._label_response:
             self._label_response.setText(self._response_text)
@@ -269,7 +413,7 @@ class HudOverlay:
         self.set_mode(new_mode)
 
     def set_state(self, state: HudState) -> None:
-        """Update the visual state of the HUD."""
+        """Update the visual state of the HUD and the waveform."""
         self._state = state
 
         state_texts = {
@@ -282,6 +426,9 @@ class HudOverlay:
 
         if self._label_status:
             self._label_status.setText(state_texts.get(state, "● Online"))
+            
+        if self._waveform:
+            self._waveform.set_state(state)
 
     def set_transcription(self, text: str) -> None:
         """Update the transcription display."""
@@ -291,9 +438,48 @@ class HudOverlay:
             self._label_transcription.setText(f'🎤 "{display}"')
 
     def set_response(self, text: str) -> None:
-        """Update the response display."""
-        if self._label_response:
-            self._label_response.setText(text)
+        """Update the response display with a typewriter glitch effect."""
+        if not self._label_response:
+            return
+
+        # Stop previous typewriter timer if running
+        if self._typewriter_timer:
+            self._typewriter_timer.stop()
+
+        self._typewriter_target = text
+        self._typewriter_index = 0
+        
+        # Adjust typewriter speed based on response length to keep it responsive
+        interval = 12 if len(text) < 100 else 6
+        self._typewriter_timer.start(interval)
+
+    def _typewriter_tick(self) -> None:
+        """Animate character additions with brief random cyber-glitching."""
+        if not self._label_response or not hasattr(self, "_typewriter_target"):
+            if self._typewriter_timer:
+                self._typewriter_timer.stop()
+            return
+
+        GLITCH_CHARS = "01$#@%&?[]{}<>/\\"
+        target = self._typewriter_target
+        length = len(target)
+
+        if self._typewriter_index >= length:
+            self._label_response.setText(target)
+            self._typewriter_timer.stop()
+            return
+
+        # Advance by 1, 2, or 3 depending on length
+        step = 1 if length < 80 else (2 if length < 250 else 3)
+        self._typewriter_index += step
+
+        if self._typewriter_index >= length:
+            self._label_response.setText(target)
+            self._typewriter_timer.stop()
+        else:
+            revealed = target[:self._typewriter_index]
+            glitch = "".join(random.choice(GLITCH_CHARS) for _ in range(min(2, length - self._typewriter_index)))
+            self._label_response.setText(revealed + glitch)
 
     def set_user(self, name: Optional[str], level: Optional[UserLevel] = None) -> None:
         """Update the user badge."""
@@ -368,6 +554,8 @@ class HudOverlay:
 
     def cleanup(self) -> None:
         """Cleanup and destroy the HUD window."""
+        if self._typewriter_timer:
+            self._typewriter_timer.stop()
         if self._window:
             self._window.close()
             self._window = None

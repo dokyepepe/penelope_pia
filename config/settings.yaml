@@ -35,14 +35,15 @@ voice:
   wake_word: "penelope"
   wake_word_threshold: 0.7
   wake_word_model_path: null  # null = use default
-  stt_model: "tiny"         # tiny, base, small, medium, large
+  stt_model: "small"         # tiny, base, small, medium, large
   stt_language: "pt"
   stt_device: "auto"          # auto, cpu, cuda
   tts_model: "pt_BR-faber-medium"
   tts_speaker_id: 0
   tts_sample_rate: 22050
   silence_threshold: 0.03
-  silence_duration_ms: 1500
+  silence_duration_ms: 800
+  beam_size: 1
   audio_sample_rate: 16000
   audio_channels: 1
 

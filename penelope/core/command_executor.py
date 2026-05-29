@@ -132,6 +132,26 @@ class CommandExecutor:
             user_name=session.user_name,
         )
 
+        # --- Intercept custom easter egg commands ---
+        raw = intent.raw_text.strip().lower()
+        if any(trigger in raw for trigger in ["mostre sua forma", "mostre seu avatar", "mostre sua cara", "mostrar avatar", "mostrar holograma"]):
+            try:
+                from penelope.utils.ascii_art import show_hologram_command
+                show_hologram_command()
+                return f"Holograma do meu núcleo ativo exibido no terminal principal. Como posso ajudar, {session.user_name}?"
+            except Exception as e:
+                log.error(f"Failed to show avatar: {e}")
+                return "Não consegui carregar a matriz do holograma."
+
+        if any(trigger in raw for trigger in ["autodiagnóstico", "diagnóstico completo", "diagnostico completo", "fazer diagnostico"]):
+            try:
+                from penelope.utils.ascii_art import run_full_diagnostics
+                run_full_diagnostics()
+                return "Diagnóstico concluído com sucesso. Todos os subsistemas estão operando com 100% de integridade."
+            except Exception as e:
+                log.error(f"Failed to run diagnostics: {e}")
+                return "Houve uma falha ao rodar os protocolos de diagnóstico."
+
         # --- Permission check ---
         required_perm = ACTION_PERMISSIONS.get(intent.action)
         if required_perm and not session.has_permission(required_perm):
