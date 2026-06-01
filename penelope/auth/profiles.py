@@ -12,7 +12,7 @@ from typing import Dict, List, Optional, Set
 
 from penelope.auth.permissions import get_default_permissions
 from penelope.utils.constants import UserLevel, PROFILES_DB_PATH, DATA_DIR
-from penelope.utils.crypto import generate_salt, hash_passphrase
+from penelope.utils.crypto import generate_salt, hash_passphrase, verify_passphrase
 from penelope.utils.logger import get_logger
 
 log = get_logger(__name__)
@@ -242,8 +242,7 @@ class ProfileManager:
         profiles = self.get_all_profiles()
 
         for profile in profiles:
-            computed_hash = hash_passphrase(passphrase, profile.salt)
-            if computed_hash == profile.passphrase_hash:
+            if verify_passphrase(passphrase, profile.salt, profile.passphrase_hash):
                 # Update last login
                 self._update_last_login(profile.id)
                 return profile

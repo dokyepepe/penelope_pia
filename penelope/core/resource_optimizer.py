@@ -222,7 +222,8 @@ class ResourceOptimizer:
                             self.bus.emit_sync(
                                 EventType.MODE_CHANGED,
                                 old_mode=old.value,
-                                new_mode=SystemMode.GAME.value
+                                new_mode=SystemMode.GAME.value,
+                                source="game_detection",
                             )
                 else:
                     # If game was running and is now stopped, restore to normal
@@ -234,7 +235,8 @@ class ResourceOptimizer:
                             self.bus.emit_sync(
                                 EventType.MODE_CHANGED,
                                 old_mode=old.value,
-                                new_mode=SystemMode.NORMAL.value
+                                new_mode=SystemMode.NORMAL.value,
+                                source="game_detection",
                             )
 
             except Exception as e:

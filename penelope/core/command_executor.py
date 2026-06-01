@@ -48,6 +48,7 @@ ACTION_PERMISSIONS: Dict[str, str] = {
     "mode_silent": "change_mode",
     "mode_night": "change_mode",
     "mode_entertainment": "change_mode",
+    "mode_game": "change_mode",
     "mode_power": "change_mode",
     "mode_normal": "change_mode",
     # User management
@@ -457,6 +458,7 @@ class CommandExecutor:
             EventType.MODE_CHANGED,
             old_mode=old_mode.value,
             new_mode=new_mode.value,
+            source="user",
         )
 
         name = mode_names.get(new_mode, new_mode.value)

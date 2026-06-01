@@ -4,6 +4,7 @@ Pub/sub system for decoupled inter-module communication.
 """
 
 import asyncio
+import inspect
 from collections import defaultdict
 from typing import Any, Callable, Coroutine, Dict, List, Optional, Union
 
@@ -93,7 +94,7 @@ class EventBus:
 
         for handler in all_handlers:
             try:
-                if asyncio.iscoroutinefunction(handler):
+                if inspect.iscoroutinefunction(handler):
                     await handler(**kwargs)
                 else:
                     handler(**kwargs)
@@ -122,7 +123,7 @@ class EventBus:
 
         for handler in all_handlers:
             try:
-                if asyncio.iscoroutinefunction(handler):
+                if inspect.iscoroutinefunction(handler):
                     try:
                         loop = asyncio.get_running_loop()
                         loop.create_task(handler(**kwargs))

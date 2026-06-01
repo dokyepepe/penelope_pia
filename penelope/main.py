@@ -25,8 +25,9 @@ if sys.platform == "win32":
 from penelope.utils.constants import UserLevel, SystemMode
 from penelope.utils.logger import setup_logging, get_logger
 
-# Initialize logging first
-setup_logging(debug="--debug" in sys.argv)
+# Initialize logging first, except for the lightweight diagnostics command.
+if "--diagnose" not in sys.argv and "--diagnostics" not in sys.argv:
+    setup_logging(debug="--debug" in sys.argv)
 log = get_logger(__name__)
 
 
@@ -61,6 +62,11 @@ _resource_optimizer = None
 
 def main() -> None:
     """Main entry point for the Penélope system."""
+    if "--diagnose" in sys.argv or "--diagnostics" in sys.argv:
+        from penelope.utils.diagnostics import main as diagnostics_main
+
+        sys.exit(diagnostics_main())
+
     try:
         from penelope.utils.ascii_art import play_boot_animation
         play_boot_animation()

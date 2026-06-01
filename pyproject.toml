@@ -43,6 +43,7 @@ dev = [
 
 [project.scripts]
 penelope = "penelope.main:main"
+penelope-diagnose = "penelope.utils.diagnostics:main"
 
 [tool.setuptools.packages.find]
 where = ["."]

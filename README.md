@@ -31,6 +31,9 @@ python -m venv .venv
 # 3. Instale as dependências
 pip install -e .
 
+# 3.1. Para desenvolvimento e testes
+pip install -e ".[dev]"
+
 # 4. Instale e configure o Ollama
 # Baixe em https://ollama.com e execute:
 ollama pull llama3.1:8b
@@ -50,10 +53,33 @@ python -m penelope.main
 
 # Opção 3: com debug verbose
 python -m penelope.main --debug
+
+# Diagnóstico rápido do ambiente
+python -m penelope.main --diagnose
 ```
 
 No primeiro boot, o **Setup Wizard** vai pedir seu nome e frase-chave de acesso.
-'''''
+
+## Validação do Ambiente
+
+Antes de iniciar a Penélope completa, rode o diagnóstico:
+
+```bash
+python -m penelope.main --diagnose
+```
+
+Ele verifica versão do Python, sistema operacional, arquivos de configuração,
+dependências centrais, dependências opcionais de voz/UI e disponibilidade do
+Ollama. Falhas obrigatórias precisam ser corrigidas antes do boot completo;
+avisos opcionais indicam recursos degradados, como STT/TTS alternativo ou
+Ollama fora do `PATH`.
+
+Para validar o código:
+
+```bash
+python -m pytest
+```
+
 ## Uso Básico
 
 1. Diga **"Penélope"** (ou pressione `Alt+Space`)
