@@ -280,32 +280,53 @@ def _init_ui() -> None:
         target = slice_data.get("target")
         if _command_executor and _session_manager:
             session = _session_manager.current
-            if session:
-                from penelope.ai.intent_parser import ParsedIntent
-                from penelope.utils.constants import IntentCategory
+            if not session:
+                # Create a temporary guest session with OWNER level so all actions from radial menu succeed
+                from penelope.auth.profiles import UserProfile
+                from penelope.auth.permissions import get_default_permissions
+                from penelope.auth.session import Session
                 
-                category = IntentCategory.SYSTEM_COMMAND
-                if action == "clipboard_history":
-                    category = IntentCategory.INFORMATION
-                elif action == "lock_session":
-                    category = IntentCategory.SESSION_CONTROL
-                elif action == "open_settings":
-                    category = IntentCategory.CONFIGURATION
-                
-                intent = ParsedIntent(
-                    raw_text=slice_data.get("label", ""),
-                    category=category,
-                    action=action,
-                    entities={"app_name": target} if target else {},
-                    confidence=1.0,
-                    requires_llm=False
+                # Mock profile
+                mock_profile = UserProfile(
+                    id=999,
+                    name="Convidado",
+                    level=UserLevel.OWNER,
+                    permissions=get_default_permissions(UserLevel.OWNER),
+                    session_timeout_minutes=0
                 )
-                
-                if _asyncio_loop:
-                    asyncio.run_coroutine_threadsafe(
-                        _execute_radial_intent(intent, session),
-                        _asyncio_loop
-                    )
+                session = Session(
+                    profile=mock_profile,
+                    user_name="Convidado",
+                    user_level=UserLevel.OWNER,
+                    permissions=get_default_permissions(UserLevel.OWNER),
+                    timeout_minutes=0
+                )
+
+            from penelope.ai.intent_parser import ParsedIntent
+            from penelope.utils.constants import IntentCategory
+            
+            category = IntentCategory.SYSTEM_COMMAND
+            if action == "clipboard_history":
+                category = IntentCategory.INFORMATION
+            elif action == "lock_session":
+                category = IntentCategory.SESSION_CONTROL
+            elif action == "open_settings":
+                category = IntentCategory.CONFIGURATION
+            
+            intent = ParsedIntent(
+                raw_text=slice_data.get("label", ""),
+                category=category,
+                action=action,
+                entities={"app_name": target} if target else {},
+                confidence=1.0,
+                requires_llm=False
+            )
+            
+            if _asyncio_loop:
+                asyncio.run_coroutine_threadsafe(
+                    _execute_radial_intent(intent, session),
+                    _asyncio_loop
+                )
 
     _radial_menu.set_action_handler(handle_radial_action)
 

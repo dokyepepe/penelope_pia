@@ -56,6 +56,20 @@ class RadialMenu:
     ) -> None:
         self.radius = radius
         self.hotkey = hotkey
+
+        # Load hotkey and radius from settings if available
+        try:
+            from penelope.utils.constants import SETTINGS_FILE
+            import yaml
+            if SETTINGS_FILE.exists():
+                with open(SETTINGS_FILE, "r", encoding="utf-8") as f:
+                    cfg = yaml.safe_load(f) or {}
+                    ui_cfg = cfg.get("ui", {})
+                    self.hotkey = ui_cfg.get("radial_menu_hotkey", self.hotkey)
+                    self.radius = ui_cfg.get("radial_menu_radius", self.radius)
+        except Exception as e:
+            log.warning(f"Could not load settings for RadialMenu: {e}")
+
         self._window = None
         self._initialized = False
         self._visible = False
@@ -264,6 +278,15 @@ class RadialMenu:
             self._initialized = True
             log.info("Radial menu initialized")
 
+            # Register event handlers for auth changes to adjust slices
+            try:
+                from penelope.ui.event_bridge import QtEventBridge
+                self.bridge = QtEventBridge()
+                self.bridge.auth_success.connect(self._on_auth_success)
+                self.bridge.session_expired.connect(self._on_session_expired)
+            except Exception as e:
+                log.warning(f"Could not register event bridge in RadialMenu: {e}")
+
             # Register global hotkey
             try:
                 import keyboard
@@ -310,6 +333,15 @@ class RadialMenu:
         self._slices = DEFAULT_SLICES.get(level_key, DEFAULT_SLICES["common"])
         if self._window:
             self._window.update()
+
+    def _on_auth_success(self, user_name: str, user_level) -> None:
+        """Handle successful authentication by updating radial menu slices."""
+        if user_level:
+            self.set_slices_for_level(user_level)
+
+    def _on_session_expired(self) -> None:
+        """Handle session expiration by reverting to owner (unauthenticated) slices."""
+        self.set_slices_for_level(UserLevel.OWNER)
 
     def set_action_handler(self, handler: Callable) -> None:
         """Set the callback for slice actions."""

@@ -76,7 +76,7 @@ ui:
   hud_position: "bottom-right"
   hud_width: 420
   hud_height: 280
-  radial_menu_hotkey: "alt+space"
+  radial_menu_hotkey: "'"
   radial_menu_radius: 200
   theme: "holographic"
   animations_enabled: true

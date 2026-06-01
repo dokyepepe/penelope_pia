@@ -53,7 +53,7 @@ python -m penelope.main --debug
 ```
 
 No primeiro boot, o **Setup Wizard** vai pedir seu nome e frase-chave de acesso.
-
+'''''
 ## Uso Básico
 
 1. Diga **"Penélope"** (ou pressione `Alt+Space`)

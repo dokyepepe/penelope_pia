@@ -115,7 +115,7 @@ class ProfileManager:
             active=bool(row["active"]),
             created_at=row["created_at"],
             last_login=row["last_login"],
-            session_timeout_minutes=row["session_timeout_minutes"] or 30,
+            session_timeout_minutes=row["session_timeout_minutes"] if row["session_timeout_minutes"] is not None else 30,
             allowed_hours_start=row["allowed_hours_start"],
             allowed_hours_end=row["allowed_hours_end"],
         )
